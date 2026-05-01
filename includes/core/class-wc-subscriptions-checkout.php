@@ -250,6 +250,11 @@ class WC_Subscriptions_Checkout {
 			$subscription->set_shipping_tax( $cart->shipping_tax_total );
 			$subscription->set_total( $cart->total );
 
+			// Calculate Cost of Goods Sold if the feature is available and enabled (WC 9.5+).
+			if ( wcs_is_wc_feature_enabled( 'cost_of_goods_sold' ) ) {
+				$subscription->calculate_cogs_total_value();
+			}
+
 			// Hook to adjust subscriptions before saving with WC 3.0+ (matches WC 3.0's new 'woocommerce_checkout_create_order' hook)
 			do_action( 'woocommerce_checkout_create_subscription', $subscription, $posted_data, $order, $cart );
 

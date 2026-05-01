@@ -35,6 +35,38 @@ function wcs_create_renewal_order( $subscription ) {
 
 	WCS_Related_Order_Store::instance()->add_relation( $renewal_order, $subscription, 'renewal' );
 
+	// Re-read suspect-stale state from the data store: in-memory total reads
+	// 0 yet the line items sum to a non-zero amount. Matches the failure mode
+	// from https://github.com/Automattic/woocommerce-subscriptions-core/issues/707
+	// where an object-cache hiccup left the in-memory snapshot stripped of
+	// its total even though the persisted row was correct, causing
+	// `WC_Subscriptions_Manager::process_renewal()` to call
+	// `payment_complete()` on an unpaid renewal. Skips legitimate $0 renewals
+	// where line items are free (e.g. free trial). For full-discount coupons
+	// the guard fires but is harmless: the re-read confirms the genuine $0
+	// total and `payment_complete()` proceeds normally. Runs before the
+	// `wcs_renewal_order_created` filter so any modifications made by
+	// downstream callbacks survive. Note: `read()` resets in-memory state via
+	// `set_defaults()` before reloading; safe here because the order is freshly
+	// persisted by `add_relation()` above with no pending in-memory changes.
+	if ( 0.0 === (float) $renewal_order->get_total()
+		&& 0.0 < (float) $renewal_order->get_subtotal()
+	) {
+		$renewal_order_id = $renewal_order->get_id();
+		try {
+			$renewal_order->get_data_store()->read( $renewal_order );
+			wc_get_logger()->info(
+				sprintf( 'Stale-cache guard refreshed renewal order #%d (in-memory total was 0 but subtotal was non-zero).', $renewal_order_id ),
+				array( 'source' => 'wcs-renewal-functions' )
+			);
+		} catch ( Exception $e ) {
+			wc_get_logger()->error(
+				sprintf( 'Stale-cache guard failed to re-read renewal order #%d: %s', $renewal_order_id, $e->getMessage() ),
+				array( 'source' => 'wcs-renewal-functions' )
+			);
+		}
+	}
+
 	/**
 	 * Provides an opportunity to monitor, interact with and replace renewal orders when they
 	 * are first created.

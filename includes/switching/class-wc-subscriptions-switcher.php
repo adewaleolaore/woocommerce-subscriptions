@@ -1146,6 +1146,21 @@ class WC_Subscriptions_Switcher {
 							unset( WC()->cart->recurring_carts[ $recurring_cart_key ] );
 						} else {
 							unset( WC()->cart->recurring_carts[ $recurring_cart_key ]->cart_contents[ $cart_item_key ] );
+
+							// Recalculate the recurring cart totals from the remaining items.
+							// We cannot call calculate_totals() here because it triggers the
+							// woocommerce_calculated_total filter chain, which rebuilds
+							// recurring carts and runs remove_handled_switch_recurring_carts(),
+							// destroying carts that WC_Subscriptions_Checkout still needs.
+							// Note: this simplified recalculation does not update discount_total,
+							// discount_tax, or per-rate cart_contents_taxes. Those properties are
+							// set separately by create_subscription() and are unlikely to be
+							// affected in typical switch scenarios (coupons on switch carts are rare).
+							$remaining_cart            = WC()->cart->recurring_carts[ $recurring_cart_key ];
+							$contents_total            = array_sum( wp_list_pluck( $remaining_cart->cart_contents, 'line_total' ) );
+							$contents_tax              = array_sum( wp_list_pluck( $remaining_cart->cart_contents, 'line_tax' ) );
+							$remaining_cart->total     = $contents_total + $contents_tax + $remaining_cart->shipping_total + $remaining_cart->shipping_tax_total;
+							$remaining_cart->tax_total = $contents_tax;
 						}
 					}
 
@@ -2175,6 +2190,22 @@ class WC_Subscriptions_Switcher {
 			if ( $refreshed_subscription ) {
 				$refreshed_subscription->calculate_totals();
 			}
+
+			// If all switched items moved to a new subscription and no active
+			// line items remain, cancel the now-empty subscription.
+			$has_added_items = false;
+			if ( ! empty( $switch_data['switches'] ) ) {
+				foreach ( $switch_data['switches'] as $switch_item_data ) {
+					if ( isset( $switch_item_data['add_line_item'] ) ) {
+						$has_added_items = true;
+						break;
+					}
+				}
+			}
+
+			if ( ! $has_added_items && $refreshed_subscription && $refreshed_subscription->has_status( 'active' ) && 0 === count( $refreshed_subscription->get_items() ) ) {
+				$refreshed_subscription->update_status( 'cancelled', __( 'All items were switched to a new subscription.', 'woocommerce-subscriptions' ) );
+			}
 		}
 	}
 
@@ -2471,10 +2502,6 @@ class WC_Subscriptions_Switcher {
 			// If items are actively being added to this subscription, then it is not the last remaining item.
 			if ( isset( $switch['add_line_item'] ) ) {
 				return false;
-			}
-
-			if ( isset( $switch['remove_line_item'] ) ) {
-				unset( $remaining_items[ $switch['remove_line_item'] ] );
 			}
 		}
 

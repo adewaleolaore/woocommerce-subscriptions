@@ -18,7 +18,7 @@ if ( 'order' == $order_type ) {
 } else {
 	echo esc_html( sprintf( __( 'Subscription Number: %s', 'woocommerce-subscriptions' ), $order->get_order_number() ) ) . "\n";
 }
-echo "\n" . esc_html( WC_Subscriptions_Email::email_order_items_table( $order, $order_items_table_args ) );
+echo "\n" . esc_html( wp_strip_all_tags( WC_Subscriptions_Email::email_order_items_table( $order, $order_items_table_args ) ) );
 
 echo "----------\n\n";
 

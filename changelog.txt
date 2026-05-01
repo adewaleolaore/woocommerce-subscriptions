@@ -1,5 +1,18 @@
 *** WooCommerce Subscriptions Changelog ***
 
+2026-04-30 - version 8.7.0
+* Add: Subscriptions Health Check — a new diagnostic tool under WooCommerce > Status that surfaces subscriptions which may need merchant attention. The initial release includes two views:
+    * Supports auto-renewal — subscriptions on manual renewal that have a saved payment token on a gateway capable of automatic renewal.
+    * Missing renewals — subscriptions that should be renewing but aren't, either because the next payment date is in the past or because the expected renewal order is missing (often caused by plugin or custom code conflicts, server or migration issues, or Action Scheduler not running).
+* Add: Cost of Goods Sold is now calculated on subscriptions and renewal orders when the WooCommerce COGS feature is enabled.
+* Add: When a customer updates their billing or shipping address from their account page, an order note is created on the subscription.
+* Fix: "Limit to one active subscription" now treats pending-cancel subscriptions as active, preventing duplicate purchases while a subscription is still providing access.
+* Fix: Multi-item subscription switching: corrected a stale total that caused overcharges on renewal, prevented items from being incorrectly split across two new subscriptions, and ensured the original subscription is cancelled when all its items switch away.
+* Fix: Subscription period interval strings now correctly display ordinal labels (e.g. "every 22nd") for custom intervals greater than 6.
+* Fix: Plain text subscription emails no longer display raw HTML markup in price sections.
+* Fix: Deleted or trashed renewal orders could remain attached to a cart after validation and proceed through checkout.
+* Fix: On stores running an object cache, a freshly-created renewal order could return a $0 total in memory while the database row held the correct amount, resulting in the order being incorrectly marked as paid.
+
 2026-04-22 - version 8.6.1
 * Fix: Changing the payment details on a subscription could sometimes override the subscriber's renewal method choice when the 'Display the auto renewal toggle' setting is enabled.
 * Fix: Updated the subscription switching flow to respect the renewal method choice on the subscription.
