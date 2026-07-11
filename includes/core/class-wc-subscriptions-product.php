@@ -497,11 +497,15 @@ class WC_Subscriptions_Product {
 	/**
 	 * Returns the "Free trial:" / "Sign-up fee:" detail line HTML for a subscription product.
 	 *
-	 * @param  WC_Product|int $product A WC_Product object or ID of a WC_Product.
+	 * @param  WC_Product|int $product          A WC_Product object or ID of a WC_Product.
+	 * @param  string         $tax_display_mode Optional. 'incl' or 'excl' to resolve the sign-up fee's tax treatment.
+	 *                                          Defaults to '', which follows the shop price display setting — correct on
+	 *                                          the product page. Cart/checkout callers pass the cart display mode so the
+	 *                                          fee matches the surrounding prices when the shop and cart settings differ.
 	 * @return string Detail line HTML, or an empty string when there is no trial or sign-up fee.
 	 * @since 9.0.0
 	 */
-	public static function get_subscription_price_details_html( $product ) {
+	public static function get_subscription_price_details_html( $product, $tax_display_mode = '' ) {
 
 		$product = self::maybe_get_product_instance( $product );
 
@@ -520,14 +524,20 @@ class WC_Subscriptions_Product {
 		$sign_up_fee = self::get_sign_up_fee( $product );
 
 		if ( $sign_up_fee > 0 ) {
-			$args                = array(
+			$args = array(
 				'qty'   => 1,
 				'price' => $sign_up_fee,
 			);
-			$sign_up_fee_display = 'incl' === get_option( 'woocommerce_tax_display_shop' ) ? wcs_get_price_including_tax( $product, $args ) : wcs_get_price_excluding_tax( $product, $args );
+			// Default to the shop price display setting (product page); cart/checkout callers pass the cart display mode.
+			$display_fee_incl_tax = '' === $tax_display_mode ? 'incl' === get_option( 'woocommerce_tax_display_shop' ) : 'incl' === $tax_display_mode;
+			$sign_up_fee_display  = $display_fee_incl_tax ? wcs_get_price_including_tax( $product, $args ) : wcs_get_price_excluding_tax( $product, $args );
+
+			// Append the store's price display suffix (e.g. "Incl VAT") so the sign-up fee matches the main price, which
+			// core suffixes via WC_Product::get_price_suffix(). Passing the fee resolves any tax placeholders against it.
+			$sign_up_fee_price_html = wc_price( $sign_up_fee_display ) . $product->get_price_suffix( $sign_up_fee );
 
 			/* translators: %s: formatted sign-up fee amount */
-			$details_html .= '<p class="woocommerce-subscriptions-product-details__signup-fee">' . wp_kses_post( sprintf( __( 'Sign-up fee: %s', 'woocommerce-subscriptions' ), wc_price( $sign_up_fee_display ) ) ) . '</p>';
+			$details_html .= '<p class="woocommerce-subscriptions-product-details__signup-fee">' . wp_kses_post( sprintf( __( 'Sign-up fee: %s', 'woocommerce-subscriptions' ), $sign_up_fee_price_html ) ) . '</p>';
 		}
 
 		return $details_html;

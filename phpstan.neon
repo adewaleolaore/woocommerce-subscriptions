@@ -1128,7 +1128,7 @@ parameters:
 
 		-
 			message: "#^Access to an undefined property WC_Cart\\:\\:\\$tax_display_cart\\.$#"
-			count: 2
+			count: 1
 			path: includes/core/class-wc-subscriptions-cart.php
 
 		-
@@ -2495,21 +2495,6 @@ parameters:
 			message: "#^Variable \\$is_visible might not be defined\\.$#"
 			count: 1
 			path: templates/apfs/cart/cart-add-to-subscription.php
-
-		-
-			message: "#^Variable \\$cart_item_key might not be defined\\.$#"
-			count: 1
-			path: templates/apfs/cart/cart-item-subscription-options.php
-
-		-
-			message: "#^Variable \\$classes might not be defined\\.$#"
-			count: 1
-			path: templates/apfs/cart/cart-item-subscription-options.php
-
-		-
-			message: "#^Variable \\$options might not be defined\\.$#"
-			count: 1
-			path: templates/apfs/cart/cart-item-subscription-options.php
 
 		-
 			message: "#^Variable \\$force_responsive might not be defined\\.$#"

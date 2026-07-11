@@ -114,9 +114,6 @@ class WC_Subscriptions_Admin {
 
 		add_action( 'woocommerce_admin_field_informational', __CLASS__ . '::add_informational_admin_field' );
 
-		add_action( 'woocommerce_admin_field_woocommerce_subscriptions_dismissible_notice', __CLASS__ . '::render_dismissible_notice_field' );
-		add_action( 'wp_ajax_woocommerce_subscriptions_dismiss_notice', __CLASS__ . '::ajax_dismiss_notice' );
-
 		// Filter Orders list table.
 		add_filter( 'posts_where', array( __CLASS__, 'filter_orders' ) );
 		add_filter( 'woocommerce_shop_order_list_table_prepare_items_query_args', [ __CLASS__, 'filter_orders_table_by_related_orders' ] );
@@ -271,11 +268,11 @@ class WC_Subscriptions_Admin {
 	 */
 	public static function add_subscription_product_creation_settings( $settings ) {
 
-		$learn_more_url = 'https://woocommerce.com/document/subscriptions/creating-subscription-products/';
+		$learn_more_url = 'https://woocommerce.com/document/subscriptions/creating-subscription-products/#dedicated-subscription-product-types';
 
 		$section_desc = sprintf(
 			/* translators: %1$s: opening anchor tag, %2$s: closing anchor tag */
-			__( 'Create subscription products using dedicated subscription product types. %1$sLearn more%2$s', 'woocommerce-subscriptions' ),
+			__( 'Enable these product types only if you have existing subscription products that rely on them. The recommended approach is to use Subscription plans for Simple and Variable products. Disabling these legacy options won\'t affect your existing products. %1$sLearn more%2$s', 'woocommerce-subscriptions' ),
 			'<a href="' . esc_url( $learn_more_url ) . '" target="_blank">',
 			'</a>'
 		);
@@ -301,12 +298,6 @@ class WC_Subscriptions_Admin {
 				'default'       => 'no',
 				'type'          => 'checkbox',
 				'checkboxgroup' => 'end',
-			),
-			array(
-				'type'        => 'woocommerce_subscriptions_dismissible_notice',
-				'id'          => 'woocommerce_subscriptions_product_type_deprecation_notice',
-				'notice_type' => 'warning',
-				'desc'        => __( 'Subscription product types will be deprecated in a future release. Moving forward, we recommend adding subscription plans to your simple and variable products.', 'woocommerce-subscriptions' ),
 			),
 			array(
 				'type' => 'sectionend',
@@ -1426,90 +1417,6 @@ class WC_Subscriptions_Admin {
 		if ( isset( $field_details['desc'] ) && $field_details['desc'] ) {
 			echo wp_kses_post( wpautop( wptexturize( $field_details['desc'] ) ) );
 		}
-	}
-
-	/**
-	 * Renders a dismissible notice within a WooCommerce settings section.
-	 *
-	 * @since 7.5.0
-	 * @param array $field_details Field configuration array with 'id', 'notice_type', and 'desc' keys.
-	 */
-	public static function render_dismissible_notice_field( $field_details ) {
-		$notice_id   = isset( $field_details['id'] ) ? $field_details['id'] : '';
-		$notice_type = isset( $field_details['notice_type'] ) ? $field_details['notice_type'] : 'info';
-		$description = isset( $field_details['desc'] ) ? $field_details['desc'] : '';
-
-		if ( empty( $notice_id ) || empty( $description ) ) {
-			return;
-		}
-
-		if ( 'yes' === get_user_meta( get_current_user_id(), '_woocommerce_subscriptions_dismissed_' . $notice_id, true ) ) {
-			return;
-		}
-
-		$nonce = wp_create_nonce( 'woocommerce_subscriptions_dismiss_notice' );
-		?>
-		<tr>
-			<td colspan="2" style="padding-left: 0; padding-top: 0;">
-				<div class="components-notice is-<?php echo esc_attr( $notice_type ); ?> is-dismissible wcs-settings-notice" data-notice-id="<?php echo esc_attr( $notice_id ); ?>" data-nonce="<?php echo esc_attr( $nonce ); ?>" style="border: 1px solid #dfb085; border-radius: 8px; gap: 4px; color: rgb(46, 25, 0);">
-					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" focusable="false" style="fill: #926300; flex-shrink: 0;">
-						<path d="M12 3.2c-4.8 0-8.8 3.9-8.8 8.8 0 4.8 3.9 8.8 8.8 8.8 4.8 0 8.8-3.9 8.8-8.8 0-4.8-4-8.8-8.8-8.8zm0 16c-4 0-7.2-3.2-7.2-7.2C4.8 8 8 4.8 12 4.8s7.2 3.2 7.2 7.2c0 4-3.2 7.2-7.2 7.2zM11 7h2v6h-2V7zm0 8h2v2h-2v-2z"></path>
-					</svg>
-					<div class="components-notice__content">
-						<p style="margin: 0;"><?php echo wp_kses_post( $description ); ?></p>
-					</div>
-					<button type="button" class="components-button components-notice__dismiss has-icon" aria-label="<?php esc_attr_e( 'Dismiss this notice.', 'woocommerce-subscriptions' ); ?>">
-						<svg fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" focusable="false">
-							<path d="M12 13.06l3.712 3.713 1.061-1.06L13.061 12l3.712-3.712-1.06-1.06L12 10.938 8.288 7.227l-1.061 1.06L10.939 12l-3.712 3.712 1.06 1.061L12 13.061z"></path>
-						</svg>
-					</button>
-				</div>
-			</td>
-		</tr>
-		<?php
-
-		$handle = 'wcs-settings-notice-dismiss';
-		if ( ! wp_script_is( $handle, 'registered' ) ) {
-			wp_register_script( $handle, '', array( 'jquery' ), false, true ); // phpcs:ignore WordPress.WP.EnqueuedResourceParameters.NoExplicitVersion
-			wp_enqueue_script( $handle );
-			wp_add_inline_script(
-				$handle,
-				"jQuery( function( $ ) {
-					$( document ).on( 'click', '.wcs-settings-notice .components-notice__dismiss', function() {
-						var \$notice = $( this ).closest( '.wcs-settings-notice' );
-						\$notice.fadeOut( 200, function() {
-							$( this ).remove();
-						} );
-						$.post( ajaxurl, {
-							action: 'woocommerce_subscriptions_dismiss_notice',
-							notice_id: \$notice.data( 'notice-id' ),
-							security: \$notice.data( 'nonce' )
-						} );
-					} );
-				} );"
-			);
-		}
-	}
-
-	/**
-	 * AJAX handler for dismissing a settings notice.
-	 *
-	 * @since 7.5.0
-	 */
-	public static function ajax_dismiss_notice() {
-		check_ajax_referer( 'woocommerce_subscriptions_dismiss_notice', 'security' );
-
-		if ( ! current_user_can( 'manage_woocommerce' ) ) {
-			wp_die( -1 );
-		}
-
-		$notice_id = isset( $_POST['notice_id'] ) ? sanitize_key( $_POST['notice_id'] ) : '';
-
-		if ( $notice_id ) {
-			update_user_meta( get_current_user_id(), '_woocommerce_subscriptions_dismissed_' . $notice_id, 'yes' );
-		}
-
-		wp_die();
 	}
 
 	/**

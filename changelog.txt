@@ -1,5 +1,16 @@
 *** WooCommerce Subscriptions Changelog ***
 
+2026-07-10 - version 9.0.1
+* Add: A progress notice now appears while your existing All Products for Subscriptions product data migrates in the background, and a completion notice once it finishes.
+* Fix: While the migration runs, products maintain their subscription plans, instead of temporarily showing as one-time only until their batch completes.
+* Fix: WooCommerce no longer logs repeated "Invalid plugin file" errors on every admin page load after All Products for Subscriptions was built into Subscriptions.
+* Fix: The product page's sign-up fee now carries the store's price display suffix (e.g. "incl. VAT") like the subscription price does, so a taxable sign-up fee no longer looks tax-free.
+* Fix: Adding a product to the cart no longer causes a fatal error under PHP 8 when another plugin's 'woocommerce_add_cart_item_data' filter callback returns a non-array value.
+* Tweak: In the Cart block, a subscription item's upfront charge now reads "$10.00 due today" instead of "Due today $10.00", matching the Checkout block.
+* Tweak: The classic shortcode cart and checkout now match the block presentation — the free trial and sign-up fee show on their own labeled lines instead of appended to the price, items with a sign-up fee show the amount due today in the subtotal, and the in-cart subscription plan selector has been removed.
+* Update: Subscription product creation settings description.
+* Dev: New `woocommerce_subscriptions_pre_product_subscription_scheme_mode` filter to short-circuit a product's resolved subscription scheme mode before it's read from meta.
+
 2026-06-23 - version 9.0.0
 * Add: All Products for Subscriptions is now built into WooCommerce Subscriptions — sell any product as a one-time purchase, a subscription, or both, with no separate plugin needed. Existing installations migrate automatically, so you can deactivate the standalone plugin. We've also enhanced it along the way:
     * Subscription plans now support free trials, sign-up fees, and fixed-amount discounts.

@@ -163,9 +163,6 @@ class WCS_ATT_Integration_PB_CP {
 		// Schemes attached on bundles should not work if the bundle contains non-supported products, such as "legacy" subscription products.
 		add_filter( 'wcsatt_product_subscription_schemes', array( __CLASS__, 'get_product_bundle_schemes' ), 10, 2 );
 
-		// Hide child cart item options.
-		add_filter( 'wcsatt_show_cart_item_options', array( __CLASS__, 'hide_child_item_options' ), 10, 3 );
-
 		// Bundled/child items inherit the active subscription scheme of their parent.
 		add_filter( 'wcsatt_set_subscription_scheme_id', array( __CLASS__, 'set_child_item_subscription_scheme' ), 10, 3 );
 
@@ -199,8 +196,8 @@ class WCS_ATT_Integration_PB_CP {
 		// Add subscription details next to subtotal of per-item-priced bundle-type container cart items.
 		add_filter( 'woocommerce_cart_item_subtotal', array( __CLASS__, 'filter_container_item_subtotal' ), 999, 3 );
 
-		// Modify bundle container cart item options to include child item prices.
-		add_filter( 'wcsatt_cart_item_options', array( __CLASS__, 'container_item_options' ), 10, 4 );
+		// Append the aggregate recurring price and trial / sign-up fee detail lines below bundle-type container items on the classic checkout.
+		add_filter( 'woocommerce_checkout_cart_item_quantity', array( __CLASS__, 'checkout_container_item_details' ), 10, 3 );
 
 		/*
 		 * Subscriptions management: 'My Account > Subscriptions' actions.
@@ -646,57 +643,6 @@ class WCS_ATT_Integration_PB_CP {
 	}
 
 	/**
-	 * Calculates bundle container item prices.
-	 *
-	 * @param  array  $cart_item
-	 * @param  string $scheme_key
-	 * @param  string $tax
-	 * @return double
-	 */
-	private static function calculate_container_item_price( $cart_item, $scheme_key, $tax = '' ) {
-
-		$product                 = $cart_item['data'];
-		$display_prices_incl_tax = '' === $tax ? WCS_ATT_Display_Cart::display_prices_including_tax() : ( 'incl' === $tax );
-
-		if ( ! $display_prices_incl_tax ) {
-			$price = (float) wc_get_price_excluding_tax( $product, array( 'price' => WCS_ATT_Product_Prices::get_price( $product, $scheme_key ) ) );
-		} else {
-			$price = (float) wc_get_price_including_tax( $product, array( 'price' => WCS_ATT_Product_Prices::get_price( $product, $scheme_key ) ) );
-		}
-
-		$child_items = self::get_bundle_type_cart_items( $cart_item );
-		$child_items = function_exists( 'wc_cp_is_composite_container_cart_item' ) && wc_cp_is_composite_container_cart_item( $cart_item ) ? wc_cp_get_composited_cart_items( $cart_item, false, false, true ) : self::get_bundle_type_cart_items( $cart_item );
-
-		if ( ! empty( $child_items ) ) {
-
-			foreach ( $child_items as $child_key => $child_item ) {
-
-				$child_qty = ceil( $child_item['quantity'] / $cart_item['quantity'] );
-
-				if ( ! $display_prices_incl_tax ) {
-					$price += (float) wc_get_price_excluding_tax(
-						$child_item['data'],
-						array(
-							'price' => WCS_ATT_Product_Prices::get_price( $child_item['data'], $scheme_key ),
-							'qty'   => $child_qty,
-						)
-					);
-				} else {
-					$price += (float) wc_get_price_including_tax(
-						$child_item['data'],
-						array(
-							'price' => WCS_ATT_Product_Prices::get_price( $child_item['data'], $scheme_key ),
-							'qty'   => $child_qty,
-						)
-					);
-				}
-			}
-		}
-
-		return $price;
-	}
-
-	/**
 	 * Add bundles to subscriptions using 'WC_PB_Order::add_bundle_to_order'.
 	 *
 	 * @param  WC_Subscription $subscription
@@ -775,12 +721,17 @@ class WCS_ATT_Integration_PB_CP {
 	/**
 	 * Hide bundled cart item subscription options.
 	 *
+	 * @deprecated 9.1.0 In-cart plan switching was removed to match the block cart & checkout, so child item options
+	 *                   are no longer rendered. Retained for backward compatibility with any code calling it directly.
+	 *
 	 * @param  boolean $show
 	 * @param  array   $cart_item
 	 * @param  string  $cart_item_key
 	 * @return boolean
 	 */
 	public static function hide_child_item_options( $show, $cart_item, $cart_item_key ) {
+
+		wcs_deprecated_function( __METHOD__, '9.1.0' );
 
 		if ( $container_cart_item = self::get_bundle_type_cart_item_container( $cart_item ) ) {
 			if ( self::has_scheme_data( $container_cart_item ) ) {
@@ -1142,6 +1093,74 @@ class WCS_ATT_Integration_PB_CP {
 	*/
 
 	/**
+	 * Aggregate first-period price of a bundle/composite container cart item for its active subscription scheme —
+	 * the container's own price plus its child items' prices. This mirrors the aggregate WooCommerce displays for
+	 * the container line, so the classic cart/checkout "due today" and recurring-price presentation reflect the
+	 * whole bundle rather than just the container's base price.
+	 *
+	 * @since 9.1.0
+	 *
+	 * @param  array  $cart_item The container cart item.
+	 * @param  string $tax       '', 'incl' or 'excl'. Empty uses the cart's display setting.
+	 * @return float
+	 */
+	public static function get_container_aggregate_price( $cart_item, $tax = '' ) {
+		$scheme_key = WCS_ATT_Product_Schemes::get_subscription_scheme( $cart_item['data'] );
+		return self::calculate_container_item_price( $cart_item, $scheme_key, $tax );
+	}
+
+	/**
+	 * Calculates bundle container item prices for a given scheme, aggregating the container's own price with its
+	 * child items' prices (per single container).
+	 *
+	 * @param  array  $cart_item
+	 * @param  string $scheme_key
+	 * @param  string $tax
+	 * @return float
+	 */
+	private static function calculate_container_item_price( $cart_item, $scheme_key, $tax = '' ) {
+
+		$product                 = $cart_item['data'];
+		$display_prices_incl_tax = '' === $tax ? WCS_ATT_Display_Cart::display_prices_including_tax() : ( 'incl' === $tax );
+
+		if ( ! $display_prices_incl_tax ) {
+			$price = (float) wc_get_price_excluding_tax( $product, array( 'price' => WCS_ATT_Product_Prices::get_price( $product, $scheme_key ) ) );
+		} else {
+			$price = (float) wc_get_price_including_tax( $product, array( 'price' => WCS_ATT_Product_Prices::get_price( $product, $scheme_key ) ) );
+		}
+
+		$child_items = function_exists( 'wc_cp_is_composite_container_cart_item' ) && wc_cp_is_composite_container_cart_item( $cart_item ) ? wc_cp_get_composited_cart_items( $cart_item, false, false, true ) : self::get_bundle_type_cart_items( $cart_item );
+
+		if ( ! empty( $child_items ) ) {
+
+			foreach ( $child_items as $child_key => $child_item ) {
+
+				$child_qty = ceil( $child_item['quantity'] / $cart_item['quantity'] );
+
+				if ( ! $display_prices_incl_tax ) {
+					$price += (float) wc_get_price_excluding_tax(
+						$child_item['data'],
+						array(
+							'price' => WCS_ATT_Product_Prices::get_price( $child_item['data'], $scheme_key ),
+							'qty'   => $child_qty,
+						)
+					);
+				} else {
+					$price += (float) wc_get_price_including_tax(
+						$child_item['data'],
+						array(
+							'price' => WCS_ATT_Product_Prices::get_price( $child_item['data'], $scheme_key ),
+							'qty'   => $child_qty,
+						)
+					);
+				}
+			}
+		}
+
+		return $price;
+	}
+
+	/**
 	 * Add subscription details next to price of per-item-priced bundle-type container cart items.
 	 *
 	 * @param  string $price
@@ -1177,12 +1196,10 @@ class WCS_ATT_Integration_PB_CP {
 			if ( $scheme = WCS_ATT_Product_Schemes::get_subscription_scheme( $cart_item['data'], 'object' ) ) {
 
 				if ( false === strpos( $price, 'subscription-details' ) && has_filter( 'woocommerce_cart_item_price', array( 'WCS_ATT_Display_Cart', 'show_cart_item_subscription_options' ), 1000 ) ) {
-					$price = WCS_ATT_Product_Prices::get_price_string(
-						$cart_item['data'],
-						array(
-							'price' => $price,
-						)
-					);
+					// Present the aggregate container price like a regular subscription line: recurring price plus the
+					// trial / sign-up fee detail lines on the classic cart (inline suffix on the mini-cart), matching
+					// the block cart/checkout. The aggregate is already the incoming $price.
+					$price = WC_Subscriptions_Cart::cart_product_price( $price, $cart_item['data'] );
 				}
 			}
 		}
@@ -1216,12 +1233,7 @@ class WCS_ATT_Integration_PB_CP {
 			if ( $scheme = WCS_ATT_Product_Schemes::get_subscription_scheme( $cart_item['data'], 'object' ) ) {
 
 				if ( false === strpos( $subtotal, 'subscription-details' ) ) {
-					$subtotal = WCS_ATT_Product_Prices::get_price_string(
-						$cart_item['data'],
-						array(
-							'price' => $subtotal,
-						)
-					);
+					$subtotal = self::container_due_today_subtotal( $subtotal, $cart_item );
 				}
 			}
 
@@ -1234,15 +1246,77 @@ class WCS_ATT_Integration_PB_CP {
 	}
 
 	/**
+	 * Builds the per-item "$X due today" subtotal for a bundle/composite container, matching the classic cart/checkout
+	 * presentation for regular subscription items (see WC_Subscriptions_Cart::get_formatted_product_subtotal). The
+	 * amount is the first payment for the whole bundle: the aggregate first period plus the container sign-up fee when
+	 * there is no trial, or just the sign-up fee when a trial defers the first period. Containers with no sign-up fee
+	 * keep the standard aggregate subtotal with no label, matching the block gate.
+	 *
+	 * @since 9.1.0
+	 *
+	 * @param  string $subtotal  The aggregate subtotal markup WooCommerce built for the container line.
+	 * @param  array  $cart_item The container cart item.
+	 * @return string
+	 */
+	private static function container_due_today_subtotal( $subtotal, $cart_item ) {
+
+		$quantity = isset( $cart_item['quantity'] ) ? $cart_item['quantity'] : 1;
+
+		// The first period for a container is the aggregate of the container and its child item prices.
+		$get_recurring_amount = function ( $incl_tax ) use ( $cart_item, $quantity ) {
+			return self::get_container_aggregate_price( $cart_item, $incl_tax ? 'incl' : 'excl' ) * $quantity;
+		};
+
+		return WC_Subscriptions_Cart::get_due_today_subtotal( $cart_item['data'], $quantity, $get_recurring_amount, $subtotal );
+	}
+
+	/**
+	 * Appends the recurring price and the trial / sign-up fee detail lines below a bundle/composite container item on
+	 * the classic checkout. The core WC_Subscriptions_Cart::checkout_cart_item_details() leaves bundle-type items to
+	 * this integration, which prices the container as the aggregate of the container and its child items so the
+	 * classic checkout reflects the whole bundle (matching the block checkout) rather than the container's base price.
+	 *
+	 * @since 9.1.0
+	 *
+	 * @param  string $quantity_html The "× qty" markup rendered before this filter.
+	 * @param  array  $cart_item     The cart item.
+	 * @param  string $cart_item_key The cart item key.
+	 * @return string
+	 */
+	public static function checkout_container_item_details( $quantity_html, $cart_item, $cart_item_key ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
+
+		if ( ! isset( $cart_item['data'] ) || ! self::is_bundle_type_container_cart_item( $cart_item ) || ! self::has_scheme_data( $cart_item ) ) {
+			return $quantity_html;
+		}
+
+		$product = $cart_item['data'];
+
+		if ( ! WC_Subscriptions_Product::is_subscription( $product ) || wcs_cart_contains_renewal() ) {
+			return $quantity_html;
+		}
+
+		$tax_display_mode = WC_Subscriptions_Cart::get_tax_display_mode();
+		$recurring_amount = self::get_container_aggregate_price( $cart_item, $tax_display_mode );
+
+		return WC_Subscriptions_Cart::build_checkout_item_details( $quantity_html, $product, $recurring_amount, $tax_display_mode );
+	}
+
+	/**
 	 * Modify bundle container cart item subscription options to include child item prices.
+	 *
+	 * @deprecated 9.1.0 In-cart plan switching was removed to match the block cart & checkout, so container options are
+	 *                   no longer rendered. Retained for backward compatibility with any code calling it directly, and
+	 *                   still applies the 'wcsatt_cart_item_options' filter so callbacks on it keep firing (deprecated).
 	 *
 	 * @param  array  $options
 	 * @param  array  $subscription_schemes
 	 * @param  array  $cart_item
 	 * @param  string $cart_item_key
-	 * @return boolean
+	 * @return array
 	 */
 	public static function container_item_options( $options, $subscription_schemes, $cart_item, $cart_item_key ) {
+
+		wcs_deprecated_function( __METHOD__, '9.1.0' );
 
 		$child_items = self::get_bundle_type_cart_items( $cart_item );
 
@@ -1299,7 +1373,13 @@ class WCS_ATT_Integration_PB_CP {
 			}
 		}
 
-		return $options;
+		return apply_filters_deprecated(
+			'wcsatt_cart_item_options',
+			array( $options, $subscription_schemes, $cart_item, $cart_item_key ),
+			'9.1.0',
+			'',
+			'In-cart subscription plan switching was removed; the classic cart & checkout now match the block presentation.'
+		);
 	}
 
 	/*

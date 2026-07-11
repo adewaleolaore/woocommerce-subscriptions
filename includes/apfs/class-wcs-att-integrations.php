@@ -105,12 +105,6 @@ class WCS_ATT_Integrations {
 			WCS_ATT_PayPal_Compatibility::init();
 		}
 
-		// Declare HPOS compatibility.
-		add_action( 'before_woocommerce_init', array( __CLASS__, 'declare_hpos_compatibility' ) );
-
-		// Declare Blocks compatibility.
-		add_action( 'before_woocommerce_init', array( __CLASS__, 'declare_blocks_compatibility' ) );
-
 		if ( is_admin() ) {
 			// Check plugin min versions.
 			add_action( 'admin_init', array( __CLASS__, 'display_notices' ) );
@@ -118,33 +112,23 @@ class WCS_ATT_Integrations {
 	}
 
 	/**
-	 * Declare HPOS( Custom Order tables) compatibility.
+	 * Declare HPOS (Custom Order tables) compatibility.
 	 *
 	 * @since APFS 4.0.3
+	 * @deprecated 9.1.0 No longer used. Subscriptions declares HPOS compatibility for the main plugin file; this is now a no-op kept for backwards compatibility.
 	 */
 	public static function declare_hpos_compatibility() {
-
-		if ( ! class_exists( 'Automattic\WooCommerce\Utilities\FeaturesUtil' ) ) {
-			return;
-		}
-
-		$compatibility = WCS_ATT_Core_Compatibility::is_wc_version_gte( '7.6.0' );
-
-		\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'custom_order_tables', WCS_ATT()->plugin_basename(), $compatibility );
+		wc_deprecated_function( __METHOD__, '9.1.0' );
 	}
 
 	/**
 	 * Declare cart/checkout Blocks compatibility.
 	 *
 	 * @since APFS 4.1.4
+	 * @deprecated 9.1.0 No longer used. Cart & Checkout Blocks are compatible by default in WooCommerce; this is now a no-op kept for backwards compatibility.
 	 */
 	public static function declare_blocks_compatibility() {
-
-		if ( ! class_exists( 'Automattic\WooCommerce\Utilities\FeaturesUtil' ) ) {
-			return;
-		}
-
-		\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'cart_checkout_blocks', WCS_ATT()->plugin_basename(), true );
+		wc_deprecated_function( __METHOD__, '9.1.0' );
 	}
 
 	/**

@@ -182,6 +182,11 @@ class WCS_ATT_Cart {
 	 */
 	public static function add_cart_item_data( $cart_item, $product_id, $variation_id ) {
 
+		// The 'woocommerce_add_cart_item_data' filter does not guarantee an array value - an earlier callback may have returned null. Guard against a fatal in array_merge() under PHP 8.
+		if ( ! is_array( $cart_item ) ) {
+			$cart_item = array();
+		}
+
 		if ( self::is_supported( array_merge( $cart_item, array( 'product_id' => $product_id ) ) ) && ! isset( $cart_item['wcsatt_data'] ) ) { // Might be set - @see 'WCS_ATT_Order::restore_cart_item_from_order_item'.
 
 			$posted_subscription_scheme_key = WCS_ATT_Product_Schemes::get_posted_subscription_scheme( $product_id );

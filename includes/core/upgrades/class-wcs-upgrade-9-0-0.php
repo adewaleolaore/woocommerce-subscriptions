@@ -33,6 +33,35 @@ class WCS_Upgrade_9_0_0 {
 	private static $tracking_option = 'woocommerce_subscriptions_9_0_0_last_migrated_product_id';
 
 	/**
+	 * The option name used to store the total number of products to migrate.
+	 *
+	 * Captured once when the migration starts and used as the denominator for the
+	 * admin progress notice.
+	 *
+	 * @var string
+	 */
+	private static $total_option = 'woocommerce_subscriptions_9_0_0_migration_total';
+
+	/**
+	 * The option name used to track how many products have been processed so far.
+	 *
+	 * Used as the numerator for the admin progress notice.
+	 *
+	 * @var string
+	 */
+	private static $migrated_count_option = 'woocommerce_subscriptions_9_0_0_migrated_count';
+
+	/**
+	 * The option name used to flag that the migration has finished.
+	 *
+	 * Set when the final batch completes and drives the dismissible completion notice.
+	 * Deleted when the merchant dismisses that notice.
+	 *
+	 * @var string
+	 */
+	private static $complete_option = 'woocommerce_subscriptions_9_0_0_migration_complete';
+
+	/**
 	 * The standalone APFS plugin basename.
 	 *
 	 * @var string
@@ -54,6 +83,108 @@ class WCS_Upgrade_9_0_0 {
 
 		// Prevent the standalone APFS plugin from being activated — its functionality is now part of Subscriptions.
 		add_action( 'admin_init', array( __CLASS__, 'block_apfs_plugin_activation' ) );
+
+		// Display the product migration progress notice while the migration is running.
+		add_action( 'admin_notices', array( __CLASS__, 'display_migration_progress_notice' ) );
+
+		// While the migration is running, resolve not-yet-migrated products using the standalone
+		// plugin's own rules so they display exactly as they did before it was deactivated,
+		// until each product's batch writes its permanent mode.
+		add_filter( 'woocommerce_subscriptions_pre_product_subscription_scheme_mode', array( __CLASS__, 'maybe_emulate_standalone_scheme_mode' ), 10, 2 );
+	}
+
+	/**
+	 * While the APFS migration is in progress, resolve a product's scheme mode with the standalone
+	 * plugin's rules instead of the core meta-based resolution.
+	 *
+	 * Core reads the mode from the `_wcsatt_schemes_status` / `_wcsatt_storewide_selection_mode`
+	 * meta keys, which the standalone plugin never wrote and does not honor — so a product carrying
+	 * stale/core-only meta could display differently than it did under the standalone. To keep the
+	 * catalog stable during the migration window, we emulate the standalone read
+	 * (`WCS_ATT_Product_Schemes::get_subscription_schemes()`) until each product's batch writes its
+	 * permanent mode. Once the migration completes (the total option is deleted) this filter becomes
+	 * inert and normal core resolution resumes.
+	 *
+	 * @since 9.0.1
+	 *
+	 * @param string|null     $mode    The pre-resolved mode (null unless another callback set it).
+	 * @param WC_Product|null $product The product being resolved.
+	 * @return string|null A WCS_ATT_Scheme::MODE_* constant to force, or the incoming value otherwise.
+	 */
+	public static function maybe_emulate_standalone_scheme_mode( $mode, $product = null ) {
+		if ( ! ( $product instanceof WC_Product ) || ! self::is_migration_in_progress() ) {
+			return $mode;
+		}
+
+		return self::standalone_scheme_mode( $product );
+	}
+
+	/**
+	 * Resolve a product's scheme mode using the standalone APFS plugin's rules.
+	 *
+	 * Mirrors the standalone `WCS_ATT_Product_Schemes::get_subscription_schemes()` resolution:
+	 * a product is one-time when explicitly disabled; uses its own custom plans when it has any;
+	 * otherwise inherits storewide plans when they exist and the product is category-eligible,
+	 * falling back to one-time. Deliberately ignores the core-only `_wcsatt_schemes_status` and
+	 * `_wcsatt_storewide_selection_mode` keys so the result matches the standalone exactly.
+	 *
+	 * @since 9.0.1
+	 *
+	 * @param WC_Product $product The product to resolve.
+	 * @return string A WCS_ATT_Scheme::MODE_* constant.
+	 */
+	private static function standalone_scheme_mode( $product ) {
+		// Variations inherit their configuration from the parent, matching the standalone.
+		$source = $product;
+
+		if ( $product->is_type( 'variation' ) ) {
+			$parent = wc_get_product( $product->get_parent_id() );
+
+			if ( $parent instanceof WC_Product ) {
+				$source = $parent;
+			}
+		}
+
+		// Explicitly disabled → one-time only.
+		if ( 'yes' === $source->get_meta( '_wcsatt_disabled', true ) ) {
+			return WCS_ATT_Scheme::MODE_DISABLE;
+		}
+
+		// Has its own custom plans → override.
+		$schemes = $source->get_meta( '_wcsatt_schemes', true );
+
+		if ( ! empty( $schemes ) && is_array( $schemes ) ) {
+			return WCS_ATT_Scheme::MODE_OVERRIDE;
+		}
+
+		// No custom plans → inherit storewide plans if they exist and the product qualifies.
+		$global_schemes = get_option( 'wcsatt_subscribe_to_cart_schemes', array() );
+
+		if ( empty( $global_schemes ) || ! is_array( $global_schemes ) ) {
+			return WCS_ATT_Scheme::MODE_DISABLE;
+		}
+
+		$categories = get_option( 'wcsatt_subscribe_to_cart_categories', array() );
+
+		if ( ! is_array( $categories ) ) {
+			$categories = array();
+		}
+
+		return self::should_inherit_storewide_plans( $product, $categories ) ? WCS_ATT_Scheme::MODE_INHERIT : WCS_ATT_Scheme::MODE_DISABLE;
+	}
+
+	/**
+	 * Whether the APFS product migration is currently in progress.
+	 *
+	 * True from the moment the migration is scheduled (the total option is set) until the
+	 * final batch completes and deletes it.
+	 *
+	 * @since 9.0.1
+	 *
+	 * @return bool
+	 */
+	private static function is_migration_in_progress() {
+		return false !== get_option( self::$total_option, false );
 	}
 
 	/**
@@ -143,7 +274,7 @@ class WCS_Upgrade_9_0_0 {
 	 *
 	 */
 	private static function schedule_apfs_migration() {
-		as_schedule_single_action( time() + ( MINUTE_IN_SECONDS * 3 ), self::$cron_hook );
+		as_schedule_single_action( time() + MINUTE_IN_SECONDS, self::$cron_hook );
 		WCS_Upgrade_Logger::add( 'Scheduled next APFS product migration batch.' );
 	}
 
@@ -167,10 +298,18 @@ class WCS_Upgrade_9_0_0 {
 			$categories = array();
 		}
 
+		// Capture the fixed denominator for the progress notice on the first batch. Deferred to here
+		// (rather than plugin deactivation) so the full-catalog count query stays off the synchronous
+		// deactivation request. On the first run the total option is still the `0` "pending" sentinel.
+		if ( 0 === $last_product_id && 0 === (int) get_option( self::$total_option, 0 ) ) {
+			update_option( self::$total_option, self::count_products_to_migrate(), 'no' );
+		}
+
 		// Query products that have no _wcsatt_schemes_status meta and no legacy APFS meta.
 		$products = self::get_products_to_migrate( $last_product_id );
 
 		$processed_count = 0;
+		$migrated_count  = (int) get_option( self::$migrated_count_option, 0 );
 
 		foreach ( $products as $product_id ) {
 			try {
@@ -194,6 +333,7 @@ class WCS_Upgrade_9_0_0 {
 			}
 
 			update_option( self::$tracking_option, $product_id, 'no' );
+			update_option( self::$migrated_count_option, ++$migrated_count, 'no' );
 			++$processed_count;
 		}
 
@@ -203,7 +343,17 @@ class WCS_Upgrade_9_0_0 {
 			self::schedule_apfs_migration();
 		} else {
 			WCS_Upgrade_Logger::add( sprintf( 'APFS product migration complete. Processed %d products in final batch.', $processed_count ) );
+
+			// Migration finished — clear the tracking and progress options so the notice stops showing.
 			delete_option( self::$tracking_option );
+			delete_option( self::$total_option );
+			delete_option( self::$migrated_count_option );
+
+			// Flag completion so the dismissible "finished" notice is shown, but only if we
+			// actually processed products (avoids a "finished" notice when there was nothing to do).
+			if ( $migrated_count > 0 ) {
+				update_option( self::$complete_option, 'yes', 'no' );
+			}
 		}
 	}
 
@@ -275,6 +425,15 @@ class WCS_Upgrade_9_0_0 {
 
 		WCS_Upgrade_Logger::add( 'Standalone APFS plugin deactivated. Triggering product migration with current category restrictions.' );
 
+		// Mark the migration as started. The total is left at the `0` "pending" sentinel and computed
+		// on the first batch instead — this keeps the full-catalog count query off the synchronous
+		// deactivation request, which could otherwise time out on very large catalogs. Guard against
+		// re-triggering mid-migration (0 is a valid "already started" value, so check for `false`).
+		if ( false === get_option( self::$total_option, false ) ) {
+			update_option( self::$total_option, 0, 'no' );
+			update_option( self::$migrated_count_option, 0, 'no' );
+		}
+
 		// Schedule the first batch with a short delay to avoid conflicts with old APFS classes still loaded.
 		as_schedule_single_action( time() + 5, self::$cron_hook );
 
@@ -320,6 +479,10 @@ class WCS_Upgrade_9_0_0 {
 	 * not have `_wcsatt_schemes_status` meta set. Additionally excludes products with
 	 * any legacy APFS meta keys.
 	 *
+	 * Only top-level products (`post_type = 'product'`) are queried — variations inherit
+	 * their subscription scheme mode from the parent at runtime, so they must not be
+	 * migrated independently.
+	 *
 	 * @since 9.0.0
 	 *
 	 * @param int $last_product_id The last product ID that was migrated.
@@ -333,7 +496,7 @@ class WCS_Upgrade_9_0_0 {
 			$wpdb->prepare(
 				"SELECT DISTINCT p.ID
 				FROM {$wpdb->posts} p
-				WHERE p.post_type IN ('product', 'product_variation')
+				WHERE p.post_type = 'product'
 				AND p.post_status != 'auto-draft'
 				AND p.ID > %d
 				AND NOT EXISTS (
@@ -361,6 +524,101 @@ class WCS_Upgrade_9_0_0 {
 		// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 
 		return array_map( 'absint', $product_ids );
+	}
+
+	/**
+	 * Count the total number of products that will be migrated.
+	 *
+	 * Mirrors the criteria used by `get_products_to_migrate()` (minus the ID cursor and
+	 * batch limit) so the progress notice's denominator matches exactly what the batches
+	 * iterate over. Captured once at the start of the run because the eligible set shrinks
+	 * as products gain the `_wcsatt_schemes_status` meta.
+	 *
+	 * @since 9.0.1
+	 *
+	 * @return int The number of products to migrate.
+	 */
+	private static function count_products_to_migrate() {
+		global $wpdb;
+
+		// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$count = $wpdb->get_var(
+			"SELECT COUNT(DISTINCT p.ID)
+			FROM {$wpdb->posts} p
+			WHERE p.post_type = 'product'
+			AND p.post_status != 'auto-draft'
+			AND NOT EXISTS (
+				SELECT 1 FROM {$wpdb->postmeta} pm
+				WHERE pm.post_id = p.ID AND pm.meta_key = '_wcsatt_schemes_status'
+			)
+			AND NOT EXISTS (
+				SELECT 1 FROM {$wpdb->postmeta} pm2
+				WHERE pm2.post_id = p.ID AND pm2.meta_key = '_wcsatt_disabled'
+			)
+			AND NOT EXISTS (
+				SELECT 1 FROM {$wpdb->postmeta} pm3
+				WHERE pm3.post_id = p.ID AND pm3.meta_key = '_wcsatt_schemes'
+			)
+			AND NOT EXISTS (
+				SELECT 1 FROM {$wpdb->postmeta} pm4
+				WHERE pm4.post_id = p.ID AND pm4.meta_key = '_wcsatt_storewide_selection_mode'
+			)"
+		);
+		// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+
+		return (int) $count;
+	}
+
+	/**
+	 * Display an admin notice reporting the product migration status.
+	 *
+	 * While the migration is running (the total option is set) it shows a progress notice.
+	 * Once the final batch completes it shows a dismissible "finished" notice, which is
+	 * cleared when the merchant dismisses it.
+	 *
+	 * @since 9.0.1
+	 */
+	public static function display_migration_progress_notice() {
+		if ( ! current_user_can( 'activate_plugins' ) ) {
+			return;
+		}
+
+		// Handle dismissal of the completion notice.
+		if ( isset( $_GET['_wcsnonce'], $_GET['woocommerce_subscriptions_dismiss_apfs_migration_notice'] ) // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			&& wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wcsnonce'] ) ), 'woocommerce_subscriptions_dismiss_apfs_migration_notice' ) ) {
+			delete_option( self::$complete_option );
+			return;
+		}
+
+		$total = (int) get_option( self::$total_option, 0 );
+
+		// Migration in progress — show the progress notice.
+		if ( $total > 0 ) {
+			$migrated = min( (int) get_option( self::$migrated_count_option, 0 ), $total );
+			$percent  = (int) floor( ( $migrated / $total ) * 100 );
+
+			$notice = new WCS_Admin_Notice( 'notice notice-info' );
+			$notice->set_simple_content(
+				sprintf(
+					/* translators: 1: number of products migrated, 2: total number of products, 3: percentage complete. */
+					__( 'WooCommerce Subscriptions is migrating your existing product data. %1$s of %2$s products migrated (%3$d%%). This runs in the background — please don\'t downgrade Subscriptions until it finishes.', 'woocommerce-subscriptions' ),
+					number_format_i18n( $migrated ),
+					number_format_i18n( $total ),
+					$percent
+				)
+			);
+			$notice->display();
+			return;
+		}
+
+		// Migration finished — show a dismissible completion notice.
+		if ( 'yes' === get_option( self::$complete_option ) ) {
+			$dismiss_url = wp_nonce_url( add_query_arg( 'woocommerce_subscriptions_dismiss_apfs_migration_notice', '1' ), 'woocommerce_subscriptions_dismiss_apfs_migration_notice', '_wcsnonce' );
+
+			$notice = new WCS_Admin_Notice( 'notice notice-success', array(), $dismiss_url );
+			$notice->set_simple_content( __( 'WooCommerce Subscriptions has finished migrating your existing product data.', 'woocommerce-subscriptions' ) );
+			$notice->display();
+		}
 	}
 
 	/**

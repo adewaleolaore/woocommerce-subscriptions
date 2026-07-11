@@ -203,9 +203,18 @@ class WCS_ATT_Product {
 
 				break;
 			case 'subscription_scheme_options_product_cart':
+				// In-cart subscription plan switching was removed to match the block cart & checkout, which do not allow
+				// changing a line item's plan in the cart. The feature key and its filter are kept (deprecated) so
+				// third-party code that queries them directly keeps working.
 				if ( isset( $args['cart_item'] ) && isset( $args['cart_item_key'] ) ) {
 					$subscription_schemes = WCS_ATT_Cart::get_subscription_schemes( $args['cart_item'] );
-					$is_feature_supported = apply_filters( 'wcsatt_show_cart_item_options', ! empty( $subscription_schemes ), $args['cart_item'], $args['cart_item_key'] );
+					$is_feature_supported = apply_filters_deprecated(
+						'wcsatt_show_cart_item_options',
+						array( ! empty( $subscription_schemes ), $args['cart_item'], $args['cart_item_key'] ),
+						'9.1.0',
+						'',
+						'In-cart subscription plan switching was removed; the classic cart & checkout now match the block presentation.'
+					);
 				}
 
 				break;
@@ -514,6 +523,25 @@ class WCS_ATT_Product {
 	 * @return string The mode. One of the WCS_ATT_Scheme::MODE_* constants.
 	 */
 	public static function get_subscription_scheme_mode( $product ) {
+		/**
+		 * Short-circuit the scheme mode resolution before it is read from product meta.
+		 *
+		 * Returning any valid mode (see WCS_ATT_Scheme::is_valid_mode()) bypasses the meta-based
+		 * resolution below; returning null (the default) leaves resolution unchanged. Used by the
+		 * APFS migration to emulate the standalone plugin's dynamic read behavior for
+		 * not-yet-migrated products while the migration is running.
+		 *
+		 * @since 9.0.1
+		 *
+		 * @param string|null $mode    A valid mode to force, or null to resolve from meta as usual.
+		 * @param WC_Product  $product The product being resolved.
+		 */
+		$forced_mode = apply_filters( 'woocommerce_subscriptions_pre_product_subscription_scheme_mode', null, $product );
+
+		if ( WCS_ATT_Scheme::is_valid_mode( $forced_mode ) ) {
+			return $forced_mode;
+		}
+
 		// Primary: read the persisted mode key.
 		$mode = $product->get_meta( '_wcsatt_schemes_status', true );
 
