@@ -33,6 +33,9 @@ class WCS_Admin_Meta_Boxes {
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_styles_scripts' ), 20 );
 
 		// We need to hook to the 'shop_order' rather than 'shop_subscription' because we declared that the 'shop_subscription' order type supports 'order-meta-boxes'.
+		// WCS_Meta_Box_Schedule::save must run before WCS_Meta_Box_Subscription_Data::save (which changes the status):
+		// its staleness guard compares the posted render-time status against the subscription's pre-transition status,
+		// so reordering these registrations would make every legitimate status-changing save skip the schedule fields.
 		add_action( 'woocommerce_process_shop_order_meta', 'WCS_Meta_Box_Schedule::save', 10, 2 );
 		add_action( 'woocommerce_process_shop_order_meta', 'WCS_Meta_Box_Subscription_Data::save', 10, 2 );
 
@@ -506,6 +509,11 @@ class WCS_Admin_Meta_Boxes {
 		$order = wc_get_order( wp_doing_ajax() && isset( $_POST['order_id'] ) ? absint( $_POST['order_id'] ) : $order_id );
 
 		if ( ! $order ) {
+			return;
+		}
+
+		// The woocommerce_save_data nonce is not order-specific, so authorize against this order before saving its meta.
+		if ( ! current_user_can( 'edit_shop_order', $order->get_id() ) ) {
 			return;
 		}
 

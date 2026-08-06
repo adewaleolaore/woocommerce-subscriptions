@@ -206,6 +206,11 @@ class WCS_Post_Meta_Cache_Manager {
 			$property   = preg_replace( '/^_/', '', $meta_key );
 			$meta_value = ( 'add' === $update_type ) ? wcs_get_objects_property( $object, $property ) : '';
 
+			// wcs_get_objects_property() cannot resolve prefixed meta keys on WP_Post objects (e.g. '_customer_user' on a subscription being untrashed), so fall back to reading the post meta directly.
+			if ( 'add' === $update_type && is_null( $meta_value ) ) {
+				$meta_value = get_post_meta( $post_id, $meta_key, true );
+			}
+
 			$this->maybe_trigger_update_cache_hook( $update_type, $post_id, $meta_key, $meta_value );
 		}
 	}

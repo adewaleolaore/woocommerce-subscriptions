@@ -159,10 +159,17 @@ class WCS_Privacy extends WC_Abstract_Privacy {
 		foreach ( $subscription_ids as $subscription_id ) {
 			$subscription = wcs_get_subscription( $subscription_id );
 
-			if ( is_a( $subscription, 'WC_Subscription' ) ) {
-				do_action( 'woocommerce_remove_subscription_personal_data', $subscription );
-				$changed++;
+			if ( ! is_a( $subscription, 'WC_Subscription' ) ) {
+				continue;
 			}
+
+			// Authorize each subscription individually before erasing its data, as WordPress core does in its own bulk loop.
+			if ( ! current_user_can( 'edit_post', $subscription->get_id() ) ) {
+				continue;
+			}
+
+			do_action( 'woocommerce_remove_subscription_personal_data', $subscription );
+			$changed++;
 		}
 
 		$sendback_args['changed'] = $changed;
@@ -187,6 +194,13 @@ class WCS_Privacy extends WC_Abstract_Privacy {
 		}
 
 		check_admin_referer( 'bulk-posts' );
+
+		// This handler runs before edit.php performs its own capability check, so authorize the caller here.
+		$post_type_object = get_post_type_object( 'shop_subscription' );
+
+		if ( ! $post_type_object || ! current_user_can( $post_type_object->cap->edit_posts ) ) {
+			return;
+		}
 
 		$action = '';
 

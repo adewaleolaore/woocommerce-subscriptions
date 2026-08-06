@@ -1422,18 +1422,19 @@ class WC_Subscriptions_Admin {
 	/**
 	 * Checks whether a user should be shown pointers or not, based on whether a user has previously dismissed pointers.
 	 *
+	 * Returns false for every user since 9.1.0: the walkthrough these pointers drive tells merchants
+	 * the extension "adds two new subscription product types - Simple subscription and Variable
+	 * subscription", but both have been opt-in and off by default since 9.0.0, so on a store where
+	 * they are disabled the first pointer anchors to a dropdown that offers neither and the second
+	 * pointer is unreachable. The pointer script and its strings are left in place for a replacement
+	 * onboarding flow.
+	 *
+	 * @see https://linear.app/a8c/issue/WOOSUBS-1849
+	 *
 	 * @since 1.0.0 - Migrated from WooCommerce Subscriptions v1.0
 	 */
 	public static function show_user_pointers() {
-		// Get dismissed pointers
-		$dismissed = explode( ',', (string) get_user_meta( get_current_user_id(), 'dismissed_wp_pointers', true ) );
-
-		// Pointer has been dismissed
-		if ( in_array( 'wcs_pointer', $dismissed ) ) {
-			return false;
-		} else {
-			return true;
-		}
+		return false;
 	}
 
 	/**

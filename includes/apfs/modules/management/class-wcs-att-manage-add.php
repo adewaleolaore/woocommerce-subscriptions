@@ -46,6 +46,19 @@ class WCS_ATT_Manage_Add extends WCS_ATT_Abstract_Module {
 	}
 
 	/**
+	 * Whether the current user may add line items to the given subscription.
+	 *
+	 * Shared by the product and cart add-to-subscription handlers so the capability policy stays identical. Callers
+	 * are responsible for any user-facing notice on failure.
+	 *
+	 * @param  WC_Subscription|false $subscription The subscription being added to.
+	 * @return bool
+	 */
+	public static function current_user_can_add_to_subscription( $subscription ) {
+		return $subscription instanceof WC_Subscription && current_user_can( 'edit_shop_subscription_line_items', $subscription->get_id() );
+	}
+
+	/**
 	 * Get posted data.
 	 *
 	 * @param  string $context

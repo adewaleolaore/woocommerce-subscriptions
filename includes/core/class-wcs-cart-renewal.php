@@ -1410,8 +1410,13 @@ class WCS_Cart_Renewal {
 			$total_coupon_discount += floatval( array_sum( wc_list_pluck( $coupon_items, 'get_discount_tax' ) ) );
 		}
 
-		// If the order total discount is different from the discount applied from coupons we have a manually applied discount.
-		$order_has_manual_discount = $order_discount !== $total_coupon_discount;
+		// A non-zero discount without coupon items is unambiguously manual. When coupon items are present,
+		// normalize the aggregate difference to WooCommerce's internal calculation precision to avoid a raw
+		// float comparison changing the result at the accepted one-minor-unit boundary. See WOOSUBS-939.
+		$price_decimals            = wc_get_price_decimals();
+		$rounding_tolerance        = pow( 10, -$price_decimals );
+		$discount_difference       = round( abs( $order_discount - $total_coupon_discount ), wc_get_rounding_precision() );
+		$order_has_manual_discount = empty( $coupon_items ) || $discount_difference > $rounding_tolerance;
 
 		// Get all coupon line items as coupon objects.
 		if ( ! empty( $coupon_items ) ) {
@@ -1634,24 +1639,30 @@ class WCS_Cart_Renewal {
 	}
 
 	/**
-	 * Sets the order cart hash when paying for a renewal order via the Block Checkout.
+	 * Allows a renewal order to pass Block Checkout's draft order validation.
 	 *
 	 * This function is hooked onto the 'woocommerce_order_has_status' filter, is only applied during REST API requests, only applies to the
 	 * 'checkout-draft' status (which only Block Checkout orders use) and to renewal orders that are currently being paid for in the cart.
 	 * All other order statuses, orders and scenarios remain unaffected by this function.
 	 *
 	 * This function is necessary to override the default logic in @see DraftOrderTrait::is_valid_draft_order().
-	 * This function behaves similarly to @see WCS_Cart_Renewal::update_cart_hash() for the standard checkout and is hooked onto the 'woocommerce_create_order' filter.
+	 * This function serves a similar purpose to @see WCS_Cart_Renewal::update_cart_hash(), which handles draft order validation for the standard checkout via the 'woocommerce_create_order' filter.
+	 *
+	 * The previous implementation set the order cart hash to match the current cart in order to satisfy the second condition in
+	 * is_valid_draft_order() ($order->has_cart_hash()). However, this inadvertently prevented update_line_items_from_cart() from
+	 * refreshing the order's line items (it skips the update when hashes match), causing discounts like coupons to never sync to
+	 * the order. Instead, we satisfy the first condition in is_valid_draft_order() by returning true for 'checkout-draft', leaving
+	 * the cart hash untouched so line items are always refreshed from the cart.
 	 *
 	 * @param bool     $has_status Whether the order has the status.
 	 * @param WC_Order $order      The order.
 	 * @param string   $status     The status to check.
 	 *
-	 * @return bool Whether the order has the status. Unchanged by this function.
+	 * @return bool Whether the order has the status. True for renewal orders being paid via Block Checkout, unchanged otherwise.
 	 */
 	public function set_renewal_order_cart_hash_on_block_checkout( $has_status, $order, $status ) {
 		/**
-		 * We only need to update the order's cart hash when the has_status() check is for 'checkout-draft' (indicating
+		 * We only need to intervene when the has_status() check is for 'checkout-draft' (indicating
 		 * this is the status check in DraftOrderTrait::is_valid_draft_order()) and the order doesn't have that status. Orders
 		 * which already have the checkout-draft status don't need to be updated to bypass the checkout block logic.
 		 */
@@ -1659,13 +1670,14 @@ class WCS_Cart_Renewal {
 			return $has_status;
 		}
 
-		// If the order being validated is the order in the cart, then we need to update the cart hash so it can be resumed.
+		// If the order being validated is the renewal order in the cart, report it as having 'checkout-draft' status so
+		// is_valid_draft_order() accepts it. We intentionally avoid modifying the cart hash here — leaving it as-is ensures
+		// update_line_items_from_cart() detects a hash mismatch and refreshes line items (including any applied discounts).
 		if ( $order && $order->get_id() === (int) WC()->session->get( 'store_api_draft_order', 0 ) ) {
 			$cart_order = $this->get_order();
 
 			if ( $cart_order && $cart_order->get_id() === $order->get_id() ) {
-				// Note: We need to pass the order object so the order instance WooCommerce uses will have the updated hash.
-				$this->set_cart_hash( $order );
+				return true;
 			}
 		}
 

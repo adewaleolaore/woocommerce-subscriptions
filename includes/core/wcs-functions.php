@@ -958,7 +958,12 @@ function wcs_set_payment_meta( $subscription, $payment_meta ) {
 					case 'post_meta':
 					case 'postmeta':
 						$subscription->update_meta_data( $meta_key, $meta_data['value'] );
-						$subscription->save();
+
+						// Saving an object that has never been stored would create it as a side effect of
+						// setting its meta. Leave the value staged and let whoever owns the object persist it.
+						if ( $subscription->get_id() ) {
+							$subscription->save();
+						}
 						break;
 					case 'options':
 						update_option( $meta_key, $meta_data['value'] );

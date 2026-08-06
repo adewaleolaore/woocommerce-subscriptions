@@ -99,8 +99,10 @@ class WC_Subscriptions_Data_Copier {
 	 * Copies the data from the "from" object to the "to" object.
 	 */
 	public function copy_data() {
+		// CPT values come directly from the database and need decoding. HPOS CRUD values are already normalized.
+		$data_is_raw = ! wcs_is_custom_order_tables_usage_enabled();
 
-		if ( ! wcs_is_custom_order_tables_usage_enabled() ) {
+		if ( $data_is_raw ) {
 			$data_array = $GLOBALS['wpdb']->get_results( $this->get_deprecated_meta_query(), ARRAY_A );
 			$data       = wp_list_pluck( $data_array, 'meta_value', 'meta_key' );
 		} else {
@@ -135,6 +137,10 @@ class WC_Subscriptions_Data_Copier {
 		 *
 		 * @since subscriptions-core 2.5.0
 		 *
+		 * On HPOS stores, values returned by this filter are copied without another
+		 * maybe_unserialize() pass. Extensions should return values in the type expected
+		 * by the destination order setter. CPT values are decoded after the filter runs.
+		 *
 		 * @param array    $data {
 		 *     The data to be copied to the "to" object. Each value is keyed by the meta key. Example format [ '_meta_key' => 'meta_value' ].
 		 *
@@ -150,6 +156,10 @@ class WC_Subscriptions_Data_Copier {
 		 *
 		 * @since subscriptions-core 2.5.0
 		 *
+		 * On HPOS stores, values returned by this filter are copied without another
+		 * maybe_unserialize() pass. Extensions should return values in the type expected
+		 * by the destination order setter. CPT values are decoded after the filter runs.
+		 *
 		 * @param array    $data {
 		 *     The data to be copied to the "to" object. Each value is keyed by the meta key. Example format [ '_meta_key' => 'meta_value' ].
 		 *
@@ -162,7 +172,7 @@ class WC_Subscriptions_Data_Copier {
 		$data = apply_filters( 'wc_subscriptions_object_data', $data, $this->to_object, $this->from_object, $this->copy_type );
 
 		foreach ( $data as $key => $value ) {
-			$this->set_data( $key, maybe_unserialize( $value ) );
+			$this->set_data( $key, $data_is_raw ? maybe_unserialize( $value ) : $value );
 		}
 
 		$this->to_object->save();
@@ -416,7 +426,7 @@ class WC_Subscriptions_Data_Copier {
 			return $data;
 		}
 
-		// Convert the data into the backwards compatible format ready for filtering - wpdb's ARRAY_A format.
+		// Convert the data into the backwards-compatible row shape used by wpdb ARRAY_A results without changing value types.
 		$data_array = [];
 
 		foreach ( $data as $key => $value ) {
@@ -441,6 +451,10 @@ class WC_Subscriptions_Data_Copier {
 		 *     - wcs_resubscribe_order_meta
 		 *
 		 * @deprecated subscriptions-core 2.5.0
+		 *
+		 * On HPOS stores, values returned by this filter are copied without another
+		 * maybe_unserialize() pass. Extensions should return values in the type expected
+		 * by the destination order setter. CPT values are decoded after the filter runs.
 		 *
 		 * @param array[]    $data_array {
 		 *     The metadata to be copied to the "to" object.

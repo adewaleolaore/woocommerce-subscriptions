@@ -270,7 +270,7 @@ class WCS_Report_Cache_Manager {
 	public function admin_notices() {
 
 		$screen       = get_current_screen();
-		$wc_screen_id = sanitize_title( __( 'WooCommerce', 'woocommerce-subscriptions' ) );
+		$wc_screen_id = 'woocommerce'; // Locale-independent: WC core pins the 'woocommerce' page hook prefix regardless of the translated menu title.
 
 		if ( in_array( $screen->id, apply_filters( 'woocommerce_reports_screen_ids', array( $wc_screen_id . '_page_wc-reports', 'dashboard' ) ) ) && isset( $_GET['tab'] ) && 'subscriptions' == $_GET['tab'] && ( ! isset( $_GET['report'] ) || in_array( $_GET['report'], array( 'subscription_events_by_date', 'upcoming_recurring_revenue', 'subscription_by_product', 'subscription_by_customer' ) ) ) && $this->use_large_site_cache() ) {
 			wcs_add_admin_notice( __( 'Please note: data for this report is cached. The data displayed may be out of date by up to 24 hours. The cache is updated each morning at 4am in your site\'s timezone.', 'woocommerce-subscriptions' ) );

@@ -89,6 +89,19 @@ class WCS_Admin_Post_Types {
 	}
 
 	/**
+	 * Normalise a request 'order' value to an 'ASC'/'DESC' literal for use in an ORDER BY clause.
+	 *
+	 * Shared by the posts (CPT) and HPOS clause builders so the two storage modes stay in sync. Anything other
+	 * than 'ASC' resolves to 'DESC'.
+	 *
+	 * @param mixed $raw The order value from the request.
+	 * @return string 'ASC' or 'DESC'.
+	 */
+	private static function normalize_order_direction( $raw ) {
+		return 'ASC' === strtoupper( (string) ( $raw ?? '' ) ) ? 'ASC' : 'DESC';
+	}
+
+	/**
 	 * Modifies the actual SQL that is needed to order by last payment date on subscriptions. Data is pulled from related
 	 * but independent posts, so subqueries are needed. That's something we can't get by filtering the request. This is hooked
 	 * in @see WCS_Admin_Post_Types::request_query function.
@@ -111,7 +124,8 @@ class WCS_Admin_Post_Types {
 			$pieces = self::posts_clauses_low_performance( $pieces );
 		}
 
-		$order = strtoupper( $query->query['order'] );
+		// Normalise to a safe ASC/DESC literal before it reaches the ORDER BY clause below.
+		$order = self::normalize_order_direction( $query->query['order'] ?? '' );
 
 		// fields and order are identical in both cases
 		$pieces['fields'] .= ', COALESCE(lp.last_payment, o.post_date_gmt, 0) as lp';
@@ -362,6 +376,13 @@ class WCS_Admin_Post_Types {
 		// Verify the nonce before proceeding, using the bulk actions nonce name as defined in WP core.
 		check_admin_referer( 'bulk-posts' );
 
+		// This handler runs before edit.php performs its own capability check, so authorize the caller here.
+		$post_type_object = get_post_type_object( 'shop_subscription' );
+
+		if ( ! $post_type_object || ! current_user_can( $post_type_object->cap->edit_posts ) ) {
+			return;
+		}
+
 		$action = '';
 
 		if ( isset( $_REQUEST['action'] ) && -1 != $_REQUEST['action'] ) { // phpcs:ignore
@@ -371,6 +392,12 @@ class WCS_Admin_Post_Types {
 		}
 
 		if ( ! in_array( $action, [ 'active', 'on-hold', 'cancelled', 'trash_subscriptions', 'untrash_subscriptions', 'delete_subscriptions' ], true ) ) {
+			return;
+		}
+
+		// Trashing, untrashing and deleting require the stronger delete capability.
+		if ( in_array( $action, [ 'trash_subscriptions', 'untrash_subscriptions', 'delete_subscriptions' ], true )
+			&& ! current_user_can( $post_type_object->cap->delete_posts ) ) {
 			return;
 		}
 
@@ -1504,6 +1531,11 @@ class WCS_Admin_Post_Types {
 		foreach ( $subscription_ids as $subscription_id ) {
 			$subscription = wcs_get_subscription( $subscription_id );
 
+			// Authorize each subscription individually, as WordPress core does in its own bulk loop.
+			if ( $subscription && ! current_user_can( 'edit_post', $subscription->get_id() ) ) {
+				continue;
+			}
+
 			$note = _x( 'Subscription status changed by bulk edit:', 'Used in order note. Reason why status changed.', 'woocommerce-subscriptions' );
 
 			try {
@@ -1558,6 +1590,11 @@ class WCS_Admin_Post_Types {
 				continue;
 			}
 
+			// Authorize each subscription individually, as WordPress core does in its own bulk loop.
+			if ( ! current_user_can( 'delete_post', $subscription->get_id() ) ) {
+				continue;
+			}
+
 			$subscription->delete( $force_delete );
 			$updated_subscription = wcs_get_subscription( $id );
 
@@ -1586,6 +1623,11 @@ class WCS_Admin_Post_Types {
 		];
 
 		foreach ( $subscription_ids as $id ) {
+			// Authorize each subscription individually, as WordPress core does in its own bulk loop.
+			if ( ! current_user_can( 'delete_post', $id ) ) {
+				continue;
+			}
+
 			if ( $use_crud_method ) {
 				$subscription = wcs_get_subscription( $id );
 
@@ -1853,7 +1895,8 @@ class WCS_Admin_Post_Types {
 			$pieces = self::orders_table_clauses_low_performance( $pieces );
 		}
 
-		$query_order = strtoupper( $args['order'] );
+		// Normalise to a safe ASC/DESC literal before it reaches the ORDER BY clause below.
+		$query_order = self::normalize_order_direction( $args['order'] ?? '' );
 
 		$pieces['orderby'] = "COALESCE(lp.last_payment, parent_order.date_created_gmt, 0) {$query_order}";
 

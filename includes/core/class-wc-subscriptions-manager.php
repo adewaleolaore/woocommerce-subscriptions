@@ -98,6 +98,9 @@ class WC_Subscriptions_Manager {
 			// set correct status to restore after a subscription is trashed/deleted
 			add_action( 'trashed_post', __CLASS__ . '::fix_trash_meta_status' );
 
+			// restore an untrashed subscription to its pre-trash status (WordPress otherwise restores it as 'draft', which is masked as 'pending')
+			add_filter( 'wp_untrash_post_status', __CLASS__ . '::restore_untrashed_subscription_status', 10, 3 );
+
 			// call special hooks when a subscription is trashed/deleted
 			add_action( 'trashed_post', __CLASS__ . '::trigger_subscription_trashed_hook' );
 			add_action( 'deleted_post', __CLASS__ . '::trigger_subscription_deleted_hook' );
@@ -1022,6 +1025,31 @@ class WC_Subscriptions_Manager {
 				break;
 			}
 		}
+	}
+
+	/**
+	 * Restore a subscription to its pre-trash status when it is untrashed on the posts (CPT) store.
+	 *
+	 * Since WordPress 5.6, wp_untrash_post() restores posts to 'draft' unless a 'wp_untrash_post_status'
+	 * filter says otherwise. WooCommerce registers such a filter for its own post types (shop_order,
+	 * shop_coupon, product, product_variation) but not for shop_subscription, so an untrashed subscription
+	 * would come back as 'draft' — which WC_Subscription::set_status() then masks as 'pending'. We mirror
+	 * WooCommerce's handling here so the subscription is restored to the status recorded when it was trashed.
+	 *
+	 * $previous_status is the '_wp_trash_meta_status' value, which fix_trash_meta_status() already normalizes
+	 * to a restorable status ('wc-pending', 'wc-expired' or 'wc-cancelled'), so no extra validation is needed.
+	 *
+	 * This only applies to the posts store: on HPOS, OrdersTableDataStore::untrash_order() reads
+	 * '_wp_trash_meta_status' directly and never runs this filter.
+	 *
+	 * @param string $new_status      The status WordPress would otherwise restore the post to ('draft').
+	 * @param int    $post_id         The ID of the post being restored.
+	 * @param string $previous_status The status of the post at the point where it was trashed.
+	 *
+	 * @return string
+	 */
+	public static function restore_untrashed_subscription_status( $new_status, $post_id, $previous_status ) {
+		return 'shop_subscription' === get_post_type( $post_id ) ? $previous_status : $new_status;
 	}
 
 	/**

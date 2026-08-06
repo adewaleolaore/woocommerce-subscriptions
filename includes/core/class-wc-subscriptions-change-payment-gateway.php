@@ -293,11 +293,13 @@ class WC_Subscriptions_Change_Payment_Gateway {
 			return;
 		}
 
-		do_action( 'woocommerce_subscription_change_payment_method_via_pay_shortcode', $subscription );
-
+		// The order key is this flow's authorization control (order-pay must keep working for guests). Verify it
+		// before firing the hook, so listeners never receive an unverified subscription.
 		if ( ! $subscription instanceof WC_Subscription || $subscription->get_order_key() !== wc_clean( wp_unslash( $_GET['key'] ?? '' ) ) ) {
 			return;
 		}
+
+		do_action( 'woocommerce_subscription_change_payment_method_via_pay_shortcode', $subscription );
 
 		try {
 			// We open an output buffer to suppress any error noise that might break the redirect.

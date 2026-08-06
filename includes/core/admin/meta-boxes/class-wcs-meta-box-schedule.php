@@ -63,6 +63,46 @@ class WCS_Meta_Box_Schedule {
 			$subscription = wcs_get_subscription( $subscription->ID );
 		}
 
+		/**
+		 * The schedule fields rendered on the edit screen depend on the subscription's status at render time.
+		 * A pending-cancel subscription, for example, posts back a read-only cancelled date, an end date set
+		 * to the end of the prepaid term and an empty next payment date. If the subscription's status changed
+		 * after the form was rendered — a duplicate submission from a second tab or a retried request after
+		 * the subscription was reactivated — writing those posted dates back would corrupt the schedule:
+		 * the stale cancelled/end dates are restored and the next payment date is deleted, which stops the
+		 * subscription from renewing. Skip the schedule save when the form was rendered for another status.
+		 */
+		if ( isset( $_POST['post_status'] ) ) {
+			$rendered_status = wcs_sanitize_subscription_status_key( wc_clean( wp_unslash( $_POST['post_status'] ) ) );
+			$current_status  = wcs_sanitize_subscription_status_key( $subscription->get_status() );
+
+			if ( $rendered_status !== $current_status ) {
+				$warning_message = sprintf(
+					// translators: placeholder is a subscription ID.
+					__( 'Your billing schedule changes for subscription #%d were not applied because its status changed after this page was loaded (for example, in another browser tab, by another user, or through an automated process). Review the latest details and try again if needed.', 'woocommerce-subscriptions' ),
+					$subscription_id
+				);
+
+				wc_get_logger()->warning(
+					$warning_message,
+					array(
+						'subscription_id' => $subscription_id,
+						'rendered_status' => $rendered_status,
+						'current_status'  => $current_status,
+					)
+				);
+
+				wcs_add_admin_notice(
+					$warning_message,
+					'error',
+					get_current_user_id(),
+					get_current_screen()->id
+				);
+
+				return;
+			}
+		}
+
 		if ( isset( $_POST['_billing_interval'] ) ) {
 			$subscription->set_billing_interval( wc_clean( wp_unslash( $_POST['_billing_interval'] ) ) );
 		}
@@ -78,6 +118,21 @@ class WCS_Meta_Box_Schedule {
 			$date_key = wcs_normalise_date_type_key( $date_type );
 
 			if ( 'last_order_date_created' === $date_key ) {
+				continue;
+			}
+
+			/**
+			 * An active subscription must never carry a cancellation date. The cancelled date is not
+			 * editable on the edit screen — the posted value is only an echo of the rendered form — so
+			 * discard it, and schedule any stored value for deletion. This also self-heals subscriptions
+			 * left with a stale cancelled date by earlier duplicate submissions: without it, the stored
+			 * date blocks all other date updates with "The cancelled date must occur after the next
+			 * payment date" validation errors, leaving no way to repair the subscription from the UI.
+			 */
+			if ( 'cancelled' === $date_key && $subscription->has_status( 'active' ) ) {
+				if ( $subscription->get_time( 'cancelled' ) > 0 ) {
+					$dates['cancelled'] = 0;
+				}
 				continue;
 			}
 

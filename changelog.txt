@@ -1,5 +1,30 @@
 *** WooCommerce Subscriptions Changelog ***
 
+2026-08-05 - version 9.1.0
+* Fix: Removed the onboarding notice and walkthrough shown after activating Subscriptions, which pointed merchants at the "Simple subscription" and "Variable subscription" product types — both off by default since 9.0.0.
+* Fix: Invalid subscription switch payment links no longer attach an unrelated order to checkout.
+* Fix: Order fields containing serialized text now retain their original value when copied to subscriptions on HPOS stores.
+* Fix: On stores using legacy (posts) order storage, restoring a subscription's parent order from the trash now makes the subscription reappear on the customer's My Account > Subscriptions page.
+* Fix: A subscription plan's sign-up fee shown on the product page (the "Sign-up fee:" line, plan option rows and pre-selected plan details) now passes through the 'woocommerce_subscriptions_product_sign_up_fee' filter, so currency and multi-currency plugins can convert it to match the cart, checkout and charged amount.
+* Fix: Deactivating or updating WooCommerce no longer triggers a site-wide fatal error for up to an hour while Subscriptions' cached WooCommerce version check is still fresh.
+* Fix: Coupons are now correctly applied when paying for a renewal via the Checkout block (previously the discount showed in the total, but was not deducted from the amount charged).
+* Fix: Renewal carts now calculate the correct total when the subscription used a recurring percentage coupon. On tax-inclusive stores, sub-cent rounding could make the coupon's discount look manually applied and produce a wrong total.
+* Tweak: Checkout no longer saves the order an extra time when the cart contains no subscription switch — previously a redundant database write on every checkout.
+* Fix: Setting a yearly "Align Renewal" date on a subscription plan no longer silently discards the alignment when only a month is chosen, or fails with an invalid-date error after the month is switched to one with fewer days.
+* Tweak: Improved the dedicated Action Scheduler queue debug log so routine skipped runs no longer read as failures.
+* Fix: On stores using legacy (posts) order storage, restoring a trashed subscription now returns it to its recorded status (e.g. cancelled) instead of pending, matching the behavior on High-Performance Order Storage.
+* Fix: Enabling web cron support for the first time now generates the web cron URL on the first save, instead of repeatedly asking to save changes without ever producing the URL.
+* Fix: The "New web cron URL generated" confirmation after generating a web cron URL now shows only once, instead of re-appearing on every subsequent save of the Subscriptions settings screen.
+* Fix: Storewide subscription plans now appear on the WooCommerce > Settings > Subscriptions screen when the admin language translates "WooCommerce" into non-Latin characters (e.g. Hebrew) — the screen previously showed an empty, unstyled table even though the plans were still saved.
+* Fix: Upgrading a subscription that was purchased through a resubscribe now credits the amount already paid for the current period, instead of quoting the full prorated price of the new plan.
+* Fix: On stores that prorate sign-up fees, switching a subscription purchased through a resubscribe now charges the new plan's sign-up fee in full, instead of wiping it with a credit for a sign-up fee that was never paid.
+* Tweak: Clearer error message on the Subscriptions settings page when "Prorate until the next billing date" is saved without choosing a product type to prorate.
+* Fix: A stale edit page no longer overwrites the billing schedule after a subscription changes status. Saving an affected Active subscription now clears its stale cancelled date, allowing the remaining schedule to be repaired from the edit screen.
+* Fix: The My Account > View Subscription page no longer triggers a PHP deprecation notice for subscriptions purchased with PayPal Standard.
+* Tweak: Hardened permission and ownership checks across subscription bulk actions, the REST API, and several AJAX and My Account request handlers.
+* Fix: Classic cart and checkout no longer overstate the "due today" item subtotal for a prorated subscription switch or a synced product billed on a later date.
+* Dev: Deprecated WC_Subscriptions_Cart::get_formatted_product_subtotal() and get_due_today_subtotal() - the "due today" item subtotal now renders on the 'woocommerce_cart_item_subtotal' filter, and Subscriptions no longer filters 'woocommerce_cart_product_subtotal', so code calling WC()->cart->get_product_subtotal() directly gets standard WooCommerce output.
+
 2026-07-10 - version 9.0.1
 * Add: A progress notice now appears while your existing All Products for Subscriptions product data migrates in the background, and a completion notice once it finishes.
 * Fix: While the migration runs, products maintain their subscription plans, instead of temporarily showing as one-time only until their batch completes.

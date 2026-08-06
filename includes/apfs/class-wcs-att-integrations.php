@@ -115,20 +115,20 @@ class WCS_ATT_Integrations {
 	 * Declare HPOS (Custom Order tables) compatibility.
 	 *
 	 * @since APFS 4.0.3
-	 * @deprecated 9.1.0 No longer used. Subscriptions declares HPOS compatibility for the main plugin file; this is now a no-op kept for backwards compatibility.
+	 * @deprecated 9.0.1 No longer used. Subscriptions declares HPOS compatibility for the main plugin file; this is now a no-op kept for backwards compatibility.
 	 */
 	public static function declare_hpos_compatibility() {
-		wc_deprecated_function( __METHOD__, '9.1.0' );
+		wc_deprecated_function( __METHOD__, '9.0.1' );
 	}
 
 	/**
 	 * Declare cart/checkout Blocks compatibility.
 	 *
 	 * @since APFS 4.1.4
-	 * @deprecated 9.1.0 No longer used. Cart & Checkout Blocks are compatible by default in WooCommerce; this is now a no-op kept for backwards compatibility.
+	 * @deprecated 9.0.1 No longer used. Cart & Checkout Blocks are compatible by default in WooCommerce; this is now a no-op kept for backwards compatibility.
 	 */
 	public static function declare_blocks_compatibility() {
-		wc_deprecated_function( __METHOD__, '9.1.0' );
+		wc_deprecated_function( __METHOD__, '9.0.1' );
 	}
 
 	/**

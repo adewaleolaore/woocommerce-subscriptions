@@ -377,7 +377,7 @@ class WC_Subscriptions_Synchroniser {
 	public static function proration_validation_error_notice() {
 		?>
 		<div class="notice notice-error">
-			<p><?php esc_html_e( 'At least one "Apply proration to" option must be selected when "Prorate until the next billing date" is chosen.', 'woocommerce-subscriptions' ); ?></p>
+			<p><?php esc_html_e( 'Choose at least one product type to prorate under Billing date alignment.', 'woocommerce-subscriptions' ); ?></p>
 		</div>
 		<?php
 	}
@@ -1161,13 +1161,7 @@ class WC_Subscriptions_Synchroniser {
 	public static function maybe_set_free_trial( $total = '' ) {
 
 		foreach ( WC()->cart->get_cart() as $cart_item_key => $cart_item ) {
-			if (
-				self::is_product_synced( $cart_item['data'] ) &&
-				! self::is_payment_upfront( $cart_item['data'] ) &&
-				! self::is_product_prorated( $cart_item['data'] ) &&
-				! self::is_today( self::calculate_first_payment_date( $cart_item['data'], 'timestamp' ) ) &&
-				( ! isset( $cart_item['subscription_resubscribe'] ) || ! self::is_sync_proration_enabled() ) // Dont override trial length set while resubscribing unless proration is disabled.
-			) {
+			if ( self::cart_item_has_deferred_first_payment( $cart_item ) ) {
 				$current_trial_length = WC_Subscriptions_Product::get_trial_length( WC()->cart->cart_contents[ $cart_item_key ]['data'] );
 				$new_trial_length     = ( $current_trial_length > 1 ) ? $current_trial_length : 1;
 				wcs_set_objects_property( WC()->cart->cart_contents[ $cart_item_key ]['data'], 'subscription_trial_length', $new_trial_length, 'set_prop_only' );
@@ -1175,6 +1169,38 @@ class WC_Subscriptions_Synchroniser {
 		}
 
 		return $total;
+	}
+
+	/**
+	 * Checks whether a cart item is a synchronised product whose first payment has been deferred to its sync date.
+	 *
+	 * This is the condition the mock free trial is applied on (@see maybe_set_free_trial()), so the amount displayed
+	 * for the line and the amount charged for it stay in agreement: the classic cart/checkout builds its "due today"
+	 * item subtotal from the line totals calculated with the mock trial active
+	 * (@see WC_Subscriptions_Cart::get_due_today_cart_item_subtotal()).
+	 *
+	 * The inputs are evaluated the same way in both contexts: the mock trial is applied on
+	 * `woocommerce_before_calculate_totals` at priority 0, before any trial is set, and it is torn down again before
+	 * rendering - so `is_payment_upfront()` and `is_product_prorated()` see the product's real trial length either way.
+	 *
+	 * @since 9.1.0
+	 *
+	 * @param  array $cart_item The cart item to check.
+	 * @return bool
+	 */
+	public static function cart_item_has_deferred_first_payment( $cart_item ) {
+
+		if ( ! is_array( $cart_item ) || ! isset( $cart_item['data'] ) || ! $cart_item['data'] instanceof WC_Product ) {
+			return false;
+		}
+
+		$product = $cart_item['data'];
+
+		return self::is_product_synced( $product ) &&
+			! self::is_payment_upfront( $product ) &&
+			! self::is_product_prorated( $product ) &&
+			! self::is_today( self::calculate_first_payment_date( $product, 'timestamp' ) ) &&
+			( ! isset( $cart_item['subscription_resubscribe'] ) || ! self::is_sync_proration_enabled() ); // Dont override trial length set while resubscribing unless proration is disabled.
 	}
 
 	/**

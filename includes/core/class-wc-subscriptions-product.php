@@ -1180,6 +1180,17 @@ class WC_Subscriptions_Product {
 
 		check_admin_referer( 'one_time_shipping', 'nonce' );
 
+		$product_id = isset( $_POST['product_id'] ) ? absint( wp_unslash( $_POST['product_id'] ) ) : 0;
+
+		if ( ! $product_id ) {
+			wp_send_json_error( array( 'message' => __( 'Missing or invalid product ID.', 'woocommerce-subscriptions' ) ), 400 );
+		}
+
+		// Authorize against the specific product; the shared nonce is not product-specific.
+		if ( ! current_user_can( 'edit_product', $product_id ) ) {
+			wp_send_json_error( array( 'message' => __( 'You do not have permission to edit this product.', 'woocommerce-subscriptions' ) ), 403 );
+		}
+
 		$one_time_shipping_enabled      = wc_clean( wp_unslash( $_POST['one_time_shipping_enabled'] ) );
 		$one_time_shipping_selected     = wc_clean( wp_unslash( $_POST['one_time_shipping_selected'] ) );
 		$subscription_one_time_shipping = 'no';
@@ -1188,7 +1199,7 @@ class WC_Subscriptions_Product {
 			$subscription_one_time_shipping = 'yes';
 		}
 
-		update_post_meta( wc_clean( wp_unslash( $_POST['product_id'] ) ), '_subscription_one_time_shipping', $subscription_one_time_shipping );
+		update_post_meta( $product_id, '_subscription_one_time_shipping', $subscription_one_time_shipping );
 
 		wp_send_json( array( 'one_time_shipping' => $subscription_one_time_shipping ) );
 	}

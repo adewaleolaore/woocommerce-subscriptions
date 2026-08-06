@@ -283,7 +283,7 @@ class WCS_ATT_Admin {
 		$screen_id = $screen ? $screen->id : '';
 
 		// Enqueue APFS admin styles on product edit screens and settings page.
-		if ( in_array( $screen_id, array( 'edit-product', 'product', WCS_ATT_Core_Compatibility::get_formatted_screen_id( 'woocommerce_page_wc-settings' ) ), true ) ) {
+		if ( in_array( $screen_id, array( 'edit-product', 'product', 'woocommerce_page_wc-settings' ), true ) ) {
 
 			// Load webpack-generated asset file for version.
 			$asset_file_path = WCS_ATT()->plugin_path() . '/build/admin.asset.php';
@@ -310,7 +310,7 @@ class WCS_ATT_Admin {
 
 		// Localize the main admin script with APFS parameters on product and settings pages.
 		// Note: The 'wcs-admin' script is registered and enqueued by WCS_Admin_Assets.
-		if ( in_array( $screen_id, array( 'product', WCS_ATT_Core_Compatibility::get_formatted_screen_id( 'woocommerce_page_wc-settings' ) ) ) ) {
+		if ( in_array( $screen_id, array( 'product', 'woocommerce_page_wc-settings' ), true ) ) {
 
 			// Get storewide plans for both product and settings pages.
 			$storewide_plans = array();

@@ -11,6 +11,7 @@ defined( 'ABSPATH' ) || exit;
 use Automattic\WooCommerce_Subscriptions\Internal\Products\BulkActions;
 use Automattic\WooCommerce_Subscriptions\Internal\Telemetry\Events as WC_Tracks_Events;
 use Automattic\WooCommerce_Subscriptions\Internal\Queue_Management\Manager as Queue_Management;
+use Automattic\WooCommerce_Subscriptions\Settings;
 
 /**
  * @method static WC_Subscriptions_Plugin instance()
@@ -175,37 +176,29 @@ class WC_Subscriptions_Plugin extends WC_Subscriptions_Core_Plugin {
 		return 'WC_Subscriptions_Payment_Gateways';
 	}
 
+	/**
+	 * Gets the canonical Subscriptions settings accessor.
+	 *
+	 * @return Settings
+	 */
+	public function settings() {
+		return Settings::instance();
+	}
+
 
 	/**
 	 * Adds welcome message after activating the plugin
+	 *
+	 * Does nothing since 9.1.0. The notice's "Add a Subscription Product" button led to the legacy
+	 * product-type walkthrough, which has been inert since 9.0.0 made the "Simple subscription" and
+	 * "Variable subscription" product types opt-in and off by default. The notice only rendered on a
+	 * store with no legacy subscription products, which is exactly the case where neither type is
+	 * available. admin_installed_notice() is left in place for a replacement onboarding flow.
+	 *
+	 * @see https://linear.app/a8c/issue/WOOSUBS-1849
 	 */
 	public function maybe_show_welcome_message() {
-		$plugin_has_just_been_activated = (bool) get_transient( WC_Subscriptions_Core_Plugin::instance()->get_activation_transient() );
-
-		// Maybe add the admin notice.
-		if ( $plugin_has_just_been_activated ) {
-
-			$woocommerce_plugin_dir_file = WC_Subscriptions_Admin::get_woocommerce_plugin_dir_file();
-
-			// check if subscription products exist in the store.
-			$subscription_product = wc_get_products(
-				array(
-					'type'   => array( 'subscription', 'variable-subscription' ),
-					'limit'  => 1,
-					'return' => 'ids',
-				)
-			);
-
-			if ( ! empty( $woocommerce_plugin_dir_file ) && 0 === count( $subscription_product ) ) {
-
-				wp_enqueue_style( 'woocommerce-activation', plugins_url( '/assets/css/activation.css', $woocommerce_plugin_dir_file ), [], WC_Subscriptions_Core_Plugin::instance()->get_plugin_version() );
-
-				if ( ! isset( $_GET['page'] ) || 'wcs-about' !== $_GET['page'] ) {
-					add_action( 'admin_notices', array( $this, 'admin_installed_notice' ) );
-				}
-			}
-			delete_transient( WC_Subscriptions_Core_Plugin::instance()->get_activation_transient() );
-		}
+		// No-op. The welcome notice is retired, see the docblock above.
 	}
 
 	/**

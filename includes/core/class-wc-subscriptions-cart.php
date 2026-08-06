@@ -76,8 +76,13 @@ class WC_Subscriptions_Cart {
 		// Subscriptions with a free trial need extra handling to support the COD gateway
 		add_filter( 'woocommerce_available_payment_gateways', __CLASS__ . '::check_cod_gateway_for_free_trials' );
 
-		// Display Formatted Totals
-		add_filter( 'woocommerce_cart_product_subtotal', __CLASS__ . '::get_formatted_product_subtotal', 11, 4 );
+		// On the classic cart/checkout, show the amount due today as the item subtotal. Priority 1: running first
+		// restores the 9.0.1 effective ordering, where the due-today replacement happened before any
+		// 'woocommerce_cart_item_subtotal' callback, so third-party callbacks at priority >= 2 compose on top of the
+		// replacement instead of having their output discarded. It must in any case stay below 10, where
+		// WC_Subscriptions_Switcher::add_cart_item_switch_direction() appends the switch direction label to this
+		// callback's output.
+		add_filter( 'woocommerce_cart_item_subtotal', __CLASS__ . '::get_due_today_cart_item_subtotal', 1, 3 );
 
 		// Sometimes, even if the order total is $0, the cart still needs payment
 		add_filter( 'woocommerce_cart_needs_payment', __CLASS__ . '::cart_needs_payment', 10, 2 );
@@ -735,11 +740,119 @@ class WC_Subscriptions_Cart {
 	/* Formatted Totals Functions */
 
 	/**
+	 * Replaces the item subtotal on the classic cart/checkout with the amount due today ("$X due today") for
+	 * subscription lines carrying a sign-up fee, matching the block cart/checkout presentation.
+	 *
+	 * The amount is the line's own pre-coupon subtotal - 'line_subtotal', plus 'line_subtotal_tax' when prices are
+	 * displayed including tax - which WooCommerce calculated with any mock free trial still active (switches, synced
+	 * products and resubscribes all defer a first payment that way). It is therefore the first-payment amount for
+	 * every deferral mechanism, current or future, without re-deriving anything from product meta at render time.
+	 * Being pre-coupon mirrors the WC Subtotal column's semantics, so lines that show no label are unaffected.
+	 *
+	 * Attached to 'woocommerce_cart_item_subtotal' at priority 1: running first restores the 9.0.1 effective
+	 * ordering, where the due-today replacement happened before any 'woocommerce_cart_item_subtotal' callback, so
+	 * third-party callbacks at priority >= 2 compose on top of the replacement instead of having their output
+	 * discarded. It must in any case run before WC_Subscriptions_Switcher::add_cart_item_switch_direction()
+	 * (priority 10), which appends the switch direction label to whatever it receives, while this callback replaces
+	 * its input.
+	 *
+	 * @since 9.1.0
+	 *
+	 * @param  string $subtotal      The subtotal markup WooCommerce built for the line.
+	 * @param  array  $cart_item     The cart item.
+	 * @param  string $cart_item_key The cart item key.
+	 * @return string
+	 */
+	public static function get_due_today_cart_item_subtotal( $subtotal, $cart_item, $cart_item_key ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
+
+		if ( ! is_array( $cart_item ) || ! isset( $cart_item['data'] ) || ! $cart_item['data'] instanceof WC_Product ) {
+			return $subtotal;
+		}
+
+		$product = $cart_item['data'];
+
+		if ( ! WC_Subscriptions_Product::is_subscription( $product ) || wcs_cart_contains_renewal() ) {
+			return $subtotal;
+		}
+
+		// Only items with a sign-up fee show the per-item "… due today" amount, matching the block cart/checkout gate.
+		if ( WC_Subscriptions_Product::get_sign_up_fee( $product ) <= 0 ) {
+			return $subtotal;
+		}
+
+		// Bundle/composite items are handled by WCS_ATT_Integration_PB_CP, which knows how to aggregate the
+		// container's amount and skip child rows. Both container and child items are left untouched here.
+		// Deliberate consequence: Mix-and-Match containers get NO due-today subtotal at all - they are skipped here as
+		// a bundle type, and the integration's container path returns early for them too (MnM renders its own
+		// aggregate). Before 9.1.0 an MnM container rendered a due-today figure, but a doubly wrong one (the
+		// container-only amount, with the deferral bug this release fixes); no figure is safer than a wrong one, and
+		// proper MnM support needs its own aggregation work.
+		if ( self::is_bundle_type_cart_line( $cart_item ) ) {
+			return $subtotal;
+		}
+
+		// Defensive: the line totals are only set once the cart totals have been calculated.
+		if ( ! isset( $cart_item['line_subtotal'], $cart_item['line_subtotal_tax'] ) ) {
+			return $subtotal;
+		}
+
+		$amount_due = (float) $cart_item['line_subtotal'];
+
+		if ( 'incl' === self::get_tax_display_mode() ) {
+			$amount_due += (float) $cart_item['line_subtotal_tax'];
+		}
+
+		return self::render_due_today_subtotal( $amount_due );
+	}
+
+	/**
+	 * Whether a cart item is a bundle/composite line - a bundle-type container or child item - that the classic
+	 * cart/checkout presentation must leave to WCS_ATT_Integration_PB_CP. The integration knows how to aggregate a
+	 * container's amount and skip child rows; the core callbacks (see get_due_today_cart_item_subtotal() and
+	 * checkout_cart_item_details()) leave both untouched.
+	 *
+	 * @since 9.1.0
+	 *
+	 * @param  array $cart_item The cart item.
+	 * @return bool
+	 */
+	private static function is_bundle_type_cart_line( $cart_item ) {
+		return class_exists( 'WCS_ATT_Integration_PB_CP' )
+			&& ( WCS_ATT_Integration_PB_CP::is_bundle_type_cart_item( $cart_item ) || WCS_ATT_Integration_PB_CP::is_bundle_type_container_cart_item( $cart_item ) );
+	}
+
+	/**
+	 * Renders an amount as the classic cart/checkout "due today" item subtotal ("$X due today").
+	 *
+	 * Shared by the regular subscription path (see get_due_today_cart_item_subtotal) and the bundle/composite
+	 * container path (see WCS_ATT_Integration_PB_CP::container_due_today_subtotal), which differ only in how the
+	 * amount is sourced.
+	 *
+	 * @since 9.1.0
+	 *
+	 * @param  float $amount The amount payable immediately.
+	 * @return string
+	 */
+	public static function render_due_today_subtotal( $amount ) {
+		$amount_due = sprintf(
+			// translators: %s is the amount payable immediately (e.g. "$30.00").
+			__( '%s due today', 'woocommerce-subscriptions' ),
+			wc_price( $amount )
+		);
+
+		return '<span class="subscription-price">' . $amount_due . '</span>';
+	}
+
+	/**
 	 * Returns the subtotal for a cart item including the subscription period and duration details
 	 *
 	 * @since 1.0.0 - Migrated from WooCommerce Subscriptions v1.0
+	 * @deprecated 9.1.0 The classic cart/checkout "due today" item subtotal is now built from the cart line totals by
+	 *                   get_due_today_cart_item_subtotal() on the 'woocommerce_cart_item_subtotal' filter, and
+	 *                   Subscriptions no longer filters 'woocommerce_cart_product_subtotal'.
 	 */
 	public static function get_formatted_product_subtotal( $product_subtotal, $product, $quantity, $cart ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
+		wcs_deprecated_function( __METHOD__, '9.1.0', __CLASS__ . '::get_due_today_cart_item_subtotal' );
 
 		if ( ! WC_Subscriptions_Product::is_subscription( $product ) ) {
 			return $product_subtotal;
@@ -752,20 +865,44 @@ class WC_Subscriptions_Cart {
 			return $incl_tax ? wcs_get_price_including_tax( $product, $recurring_args ) : wcs_get_price_excluding_tax( $product, $recurring_args );
 		};
 
-		return self::get_due_today_subtotal( $product, $quantity, $get_recurring_amount, $product_subtotal );
+		return self::legacy_due_today_subtotal( $product, $quantity, $get_recurring_amount, $product_subtotal );
 	}
 
 	/**
 	 * Builds the per-item "$X due today" subtotal for a subscription line item, matching the block cart/checkout
 	 * presentation. The amount is the first payment: the first period plus the sign-up fee when there is no trial, or
 	 * just the sign-up fee when a trial defers the first period. The `$fallback` is returned unchanged when no
-	 * "due today" amount should be shown — on a renewal cart, or for items with no sign-up fee (matching the block
+	 * "due today" amount should be shown - on a renewal cart, or for items with no sign-up fee (matching the block
 	 * gate; even trial-only items keep the standard subtotal with no label).
 	 *
-	 * Shared by the classic cart/checkout subtotal for regular subscription products
-	 * (see get_formatted_product_subtotal) and for bundle/composite containers
-	 * (see WCS_ATT_Integration_PB_CP::container_due_today_subtotal), which differ only in how the first-period amount
-	 * is sourced.
+	 * @since 9.0.1
+	 * @deprecated 9.1.0 Use get_due_today_cart_item_subtotal() - it reads the amount from the cart line totals
+	 *                   instead of re-deriving it from product meta, and applies the same renewal-cart, sign-up-fee
+	 *                   and bundle-type gates this method applied. render_due_today_subtotal() only builds the
+	 *                   "$X due today" markup for an amount and applies NO gates - it is not a drop-in replacement.
+	 *
+	 * @param  WC_Product $product              The subscription product (or bundle/composite container product).
+	 * @param  int        $quantity             The line quantity.
+	 * @param  callable   $get_recurring_amount Given a boolean $incl_tax, returns the tax-adjusted first-period amount
+	 *                                          for the whole line. Only called when there is no trial.
+	 * @param  string     $fallback             The markup to return unchanged when no "due today" amount applies.
+	 * @return string
+	 */
+	public static function get_due_today_subtotal( $product, $quantity, callable $get_recurring_amount, $fallback ) {
+		wcs_deprecated_function( __METHOD__, '9.1.0', __CLASS__ . '::get_due_today_cart_item_subtotal' );
+
+		return self::legacy_due_today_subtotal( $product, $quantity, $get_recurring_amount, $fallback );
+	}
+
+	/**
+	 * The 9.0.1 "due today" item subtotal calculation retained for the deprecated entry points above.
+	 *
+	 * Private on purpose: it exists so get_formatted_product_subtotal() and get_due_today_subtotal() can share this
+	 * body without calling each other, letting each deprecated entry point emit exactly one deprecation notice - its
+	 * own - per legacy call. The logic is the 9.0.1 shipped form INCLUDING its known deferral bug (it decides
+	 * deferral from the product's trial length at render time, after any mock free trial expressing a deferred first
+	 * payment has been torn down - the bug get_due_today_cart_item_subtotal() fixes by reading the calculated line
+	 * totals instead), kept byte-for-byte for backward compatibility of the deprecated methods' output.
 	 *
 	 * @since 9.1.0
 	 *
@@ -776,7 +913,7 @@ class WC_Subscriptions_Cart {
 	 * @param  string     $fallback             The markup to return unchanged when no "due today" amount applies.
 	 * @return string
 	 */
-	public static function get_due_today_subtotal( $product, $quantity, callable $get_recurring_amount, $fallback ) {
+	private static function legacy_due_today_subtotal( $product, $quantity, callable $get_recurring_amount, $fallback ) {
 
 		if ( wcs_cart_contains_renewal() ) {
 			return $fallback;
@@ -819,7 +956,7 @@ class WC_Subscriptions_Cart {
 	 * 4.4 where WC_Cart::get_tax_price_display_mode() did not yet exist. Centralised so the classic cart/checkout
 	 * presentation resolves the mode the same way everywhere.
 	 *
-	 * @since 9.1.0
+	 * @since 9.0.1
 	 * @return string
 	 */
 	public static function get_tax_display_mode() {
@@ -1036,7 +1173,7 @@ class WC_Subscriptions_Cart {
 	 *
 	 * The mini-cart keeps the long-standing inline suffix, so it is excluded even when rendered on the cart page.
 	 *
-	 * @since 9.1.0
+	 * @since 9.0.1
 	 * @return bool
 	 */
 	protected static function should_surface_detail_lines() {
@@ -1052,7 +1189,7 @@ class WC_Subscriptions_Cart {
 	 * recurring amount and the "Free trial:" / "Sign-up fee:" lines are appended after the "name × qty" markup — the
 	 * same information the cart page shows in its Price column, matching the block checkout presentation.
 	 *
-	 * @since 9.1.0
+	 * @since 9.0.1
 	 *
 	 * @param  string $quantity_html The "× qty" markup rendered before this filter.
 	 * @param  array  $cart_item     The cart item.
@@ -1073,8 +1210,7 @@ class WC_Subscriptions_Cart {
 
 		// Bundle/composite items are handled by WCS_ATT_Integration_PB_CP, which knows how to aggregate the
 		// container's price and skip child rows. Both container and child items are left untouched here.
-		if ( class_exists( 'WCS_ATT_Integration_PB_CP' )
-			&& ( WCS_ATT_Integration_PB_CP::is_bundle_type_cart_item( $cart_item ) || WCS_ATT_Integration_PB_CP::is_bundle_type_container_cart_item( $cart_item ) ) ) {
+		if ( self::is_bundle_type_cart_line( $cart_item ) ) {
 			return $quantity_html;
 		}
 
@@ -1090,7 +1226,7 @@ class WC_Subscriptions_Cart {
 	 * path (see checkout_cart_item_details) and the bundle/composite container path in the PB/CP integration, which
 	 * differ only in how the recurring amount is sourced.
 	 *
-	 * @since 9.1.0
+	 * @since 9.0.1
 	 *
 	 * @param  string     $quantity_html    The "× qty" markup rendered before this filter.
 	 * @param  WC_Product $product          The subscription product (or bundle/composite container product).

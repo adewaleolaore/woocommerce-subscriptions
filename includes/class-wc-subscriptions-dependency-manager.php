@@ -11,6 +11,18 @@ defined( 'ABSPATH' ) || exit;
 class WC_Subscriptions_Dependency_Manager {
 
 	/**
+	 * Name of the transient caching the active WooCommerce version number.
+	 *
+	 * Public so the plugin bootstrap can refresh the same transient on 'woocommerce_init'.
+	 * The value is stored on live sites and written by previous plugin versions - do not change it.
+	 *
+	 * @since 9.1.0
+	 *
+	 * @var string
+	 */
+	public const WC_ACTIVE_VERSION_TRANSIENT = 'wcs_woocommerce_active_version';
+
+	/**
 	 * The minimum supported WooCommerce version.
 	 *
 	 * @var string
@@ -58,7 +70,9 @@ class WC_Subscriptions_Dependency_Manager {
 	 * @return bool True if the required dependencies are met. Otherwise, false.
 	 */
 	public function has_valid_dependencies() {
-		// We don't need to check is_woocommerce_active() here because is_woocommerce_version_supported() will return false if WooCommerce is not active.
+		// The version check covers the active check too: get_woocommerce_active_version() only trusts the cached
+		// version after a fresh active-plugins presence check, so it returns null (which fails the version
+		// comparison) when WooCommerce is not going to load this request.
 		return $this->is_woocommerce_version_supported();
 	}
 
@@ -97,7 +111,10 @@ class WC_Subscriptions_Dependency_Manager {
 	 * This method detects the active version of WooCommerce.
 	 *
 	 * If the WC_VERSION constant is already defined, use that as a first preference.
-	 * If it's not defined, fetch the version based on the WooCommerce plugin data.
+	 * Otherwise, first confirm WooCommerce is going to load this request (a fresh check of the
+	 * active plugin options plus the plugin file existing on disk), then resolve the version from
+	 * the cached transient or, on a cache miss, from the plugin file header. The cached version is
+	 * never trusted as proof that WooCommerce is active - only as the version number.
 	 *
 	 * The WooCommerce plugin is determined by this logic:
 	 * 1. Installed at 'woocommerce/woocommerce.php'
@@ -110,52 +127,166 @@ class WC_Subscriptions_Dependency_Manager {
 			return WC_VERSION;
 		}
 
-		// Use a cached value to avoid calling get_plugins() and looping multiple times.
+		// Use a cached value to avoid resolving the version multiple times per request.
 		if ( true === $this->wc_version_cached ) {
 			return $this->wc_active_version;
 		}
 
 		$this->wc_version_cached = true;
 
-		// Try to get version from transient first
-		$this->wc_active_version = get_transient( 'wcs_woocommerce_active_version' );
+		// Presence gate: no candidate means WooCommerce won't load this request, regardless of any
+		// cached version. Don't touch the transient here - invalidation is the option-update
+		// listener's job and the TTL is the backstop.
+		$candidates = $this->get_active_woocommerce_plugin_files();
 
-		if ( false !== $this->wc_active_version ) {
+		if ( empty( $candidates ) ) {
+			$this->wc_active_version = null;
+			return null;
+		}
+
+		// Warm path: trust the cached version number only after a candidate is confirmed to actually
+		// be WooCommerce - an impostor '{x}/woocommerce.php' entry must not resurrect a stale cache.
+		$cached_version = get_transient( self::WC_ACTIVE_VERSION_TRANSIENT );
+
+		if ( false !== $cached_version && $this->contains_woocommerce_plugin_file( $candidates ) ) {
+			$this->wc_active_version = $cached_version;
 			return $this->wc_active_version;
 		}
 
-		// Load plugin.php if it's not already loaded.
-		if ( ! function_exists( 'is_plugin_active' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/plugin.php';
-		}
-
-		// Loop through all active plugins and check if WooCommerce is active.
-		foreach ( get_plugins() as $plugin_slug => $plugin_data ) {
-			$is_woocommerce = false;
-
-			/**
-			 * The WooCommerce plugin can be installed in two supported ways:
-			 *   1. Installed at 'woocommerce/woocommerce.php'
-			 *   2. Installed at any '{x}/woocommerce.php' where the plugin name is 'WooCommerce'
-			 */
-			if ( 'woocommerce/woocommerce.php' === $plugin_slug ) {
-				$is_woocommerce = true;
-			} elseif ( 'woocommerce.php' === basename( $plugin_slug ) && 'WooCommerce' === $plugin_data['Name'] ) {
-				$is_woocommerce = true;
+		// Cache miss: read the version from the candidate plugin file headers.
+		foreach ( $candidates as $plugin_file ) {
+			if ( ! $this->is_woocommerce_plugin_file( $plugin_file ) ) {
+				continue;
 			}
 
-			if ( $is_woocommerce && is_plugin_active( $plugin_slug ) ) {
-				$this->wc_active_version = $plugin_data['Version'];
-				break; // Found it, no need to continue looping
+			$plugin_data = get_file_data( WP_PLUGIN_DIR . '/' . $plugin_file, array( 'Version' => 'Version' ) );
+
+			// A file without a Version header (e.g. truncated mid-update) is not a resolved
+			// version: keep looking so the version stays null rather than an empty string.
+			if ( '' === $plugin_data['Version'] ) {
+				continue;
 			}
+
+			$this->wc_active_version = $plugin_data['Version'];
+			break; // Found it, no need to continue looping
 		}
 
 		// Cache the result in a transient for 1 hour
 		if ( ! empty( $this->wc_active_version ) ) {
-			set_transient( 'wcs_woocommerce_active_version', $this->wc_active_version, HOUR_IN_SECONDS );
+			set_transient( self::WC_ACTIVE_VERSION_TRANSIENT, $this->wc_active_version, HOUR_IN_SECONDS );
 		}
 
 		return $this->wc_active_version;
+	}
+
+	/**
+	 * Gets the active plugin entries that could be WooCommerce and exist on disk.
+	 *
+	 * Reads the active plugin options directly (avoiding wp-admin/includes/plugin.php on the hot
+	 * path), discards invalid entries via validate_file() and requires the plugin file to exist,
+	 * mirroring wp_get_active_and_valid_plugins() semantics. This also covers the case where the
+	 * plugin directory was renamed or removed while the option entry remained. Presence only -
+	 * plugin headers are not read here.
+	 *
+	 * @since 9.1.0
+	 *
+	 * @return string[] Plugin file paths relative to WP_PLUGIN_DIR. Empty if WooCommerce is not active.
+	 */
+	private function get_active_woocommerce_plugin_files() {
+		$active_plugins = (array) get_option( 'active_plugins', array() );
+
+		if ( is_multisite() ) {
+			$active_plugins = array_merge( $active_plugins, array_keys( (array) get_site_option( 'active_sitewide_plugins', array() ) ) );
+		}
+
+		// Discard corrupted option values (non-string entries, traversal/absolute paths) before any
+		// use - the same validate_file() check wp_get_active_and_valid_plugins() applies. Filtering
+		// first also keeps non-string entries away from array_unique()'s string casts.
+		$active_plugins = array_filter(
+			$active_plugins,
+			static function ( $plugin_file ) {
+				return is_string( $plugin_file ) && 0 === validate_file( $plugin_file );
+			}
+		);
+
+		$candidates = array();
+
+		foreach ( array_unique( $active_plugins ) as $plugin_file ) {
+			if ( 'woocommerce.php' !== basename( $plugin_file ) ) {
+				continue;
+			}
+
+			if ( file_exists( WP_PLUGIN_DIR . '/' . $plugin_file ) ) {
+				$candidates[] = $plugin_file;
+			}
+		}
+
+		return $candidates;
+	}
+
+	/**
+	 * Determines whether any of the given presence candidates is the WooCommerce plugin.
+	 *
+	 * The default install path is confirmed via the candidate path alone, keeping the common
+	 * (default-folder) warm path free of any file reads; only non-default-folder candidates
+	 * fall through to the plugin header check.
+	 *
+	 * @since 9.1.0
+	 *
+	 * @param string[] $candidates Plugin file paths relative to WP_PLUGIN_DIR.
+	 * @return bool True if at least one candidate is the WooCommerce plugin.
+	 */
+	private function contains_woocommerce_plugin_file( $candidates ) {
+		if ( in_array( 'woocommerce/woocommerce.php', $candidates, true ) ) {
+			return true;
+		}
+
+		foreach ( $candidates as $plugin_file ) {
+			if ( $this->is_woocommerce_plugin_file( $plugin_file ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Determines whether an active plugin entry is the WooCommerce plugin.
+	 *
+	 * The default install path ('woocommerce/woocommerce.php') is accepted without reading the
+	 * file; any other '{x}/woocommerce.php' entry must declare 'Plugin Name: WooCommerce' in its
+	 * header. Shared by the warm (transient) and cold (header read) paths so the matching rule
+	 * cannot drift between them.
+	 *
+	 * @since 9.1.0
+	 *
+	 * @param string $plugin_file Plugin file path relative to WP_PLUGIN_DIR.
+	 * @return bool True if the entry is the WooCommerce plugin.
+	 */
+	private function is_woocommerce_plugin_file( $plugin_file ) {
+		if ( 'woocommerce/woocommerce.php' === $plugin_file ) {
+			return true;
+		}
+
+		$plugin_data = get_file_data( WP_PLUGIN_DIR . '/' . $plugin_file, array( 'Name' => 'Plugin Name' ) );
+
+		return 'WooCommerce' === $plugin_data['Name'];
+	}
+
+	/**
+	 * Clears the cached WooCommerce version.
+	 *
+	 * Deletes the version transient and resets the per-request memoization so the next lookup
+	 * re-resolves from the active plugin state. Registered on the 'update_option_active_plugins'
+	 * and 'update_site_option_active_sitewide_plugins' hooks, but safe to call at any time.
+	 *
+	 * @since 9.1.0
+	 */
+	public function delete_woocommerce_active_version_cache() {
+		delete_transient( self::WC_ACTIVE_VERSION_TRANSIENT );
+
+		$this->wc_version_cached = false;
+		$this->wc_active_version = null;
 	}
 
 	/**

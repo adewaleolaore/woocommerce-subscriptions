@@ -260,7 +260,10 @@ class Dedicated_Queue {
 	 *
 	 *  - Applied: "Dedicated queue runner "scope-name" created. Cycle: 2/2."
 	 *  - Blocked: "Dedicated queue runner "scope-name" could not be created. Existing claim: group=foo. Cycle: 2/2."
-	 *  - Not yet: "Dedicated queue runner "scope-name" could not be created. Existing claim: none. Cycle: 1/2."
+	 *  - Not yet: "Dedicated queue runner "scope-name" not created this run: rotation turn 1 of 2 (subscription-focused run happens on turn 2)."
+	 *
+	 * The "not yet" shape fires on every non-focus run by design, so it is worded as a scheduled skip rather
+	 * than a failure; only the genuinely blocked shape (a foreign claim filter) keeps "could not be created".
 	 *
 	 * `$cycle` reflects the in-memory turn value for the run (i.e. what would have been written had we
 	 * proceeded), which keeps the log meaningful for both deferred and pre-rotation outcomes.
@@ -276,13 +279,21 @@ class Dedicated_Queue {
 			return sprintf( 'Dedicated queue runner "%1$s" created. Cycle: %2$d/%3$d.', $this->name, $cycle, $this->rotation );
 		}
 
-		$claim = 'none';
-		if ( null !== $existing_filter ) {
-			$value = is_array( $existing_filter['value'] )
-				? implode( ',', $existing_filter['value'] )
-				: (string) $existing_filter['value'];
-			$claim = sprintf( '%s=%s', $existing_filter['name'], $value );
+		// If the scope was not applied, and there was no existing filter, that indicates that we simply have not reached
+		// the rotation turn yet (vs bailing out because of an existing filter).
+		if ( null === $existing_filter ) {
+			return sprintf(
+				'Dedicated queue runner "%1$s" not created this run: rotation turn %2$d of %3$d (subscription-focused run happens on turn %3$d).',
+				$this->name,
+				$cycle,
+				$this->rotation
+			);
 		}
+
+		$value = is_array( $existing_filter['value'] )
+			? implode( ',', $existing_filter['value'] )
+			: (string) $existing_filter['value'];
+		$claim = sprintf( '%s=%s', $existing_filter['name'], $value );
 
 		return sprintf(
 			'Dedicated queue runner "%1$s" could not be created. Existing claim: %2$s. Cycle: %3$d/%4$d.',

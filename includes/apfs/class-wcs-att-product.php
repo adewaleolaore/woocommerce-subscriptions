@@ -211,7 +211,7 @@ class WCS_ATT_Product {
 					$is_feature_supported = apply_filters_deprecated(
 						'wcsatt_show_cart_item_options',
 						array( ! empty( $subscription_schemes ), $args['cart_item'], $args['cart_item_key'] ),
-						'9.1.0',
+						'9.0.1',
 						'',
 						'In-cart subscription plan switching was removed; the classic cart & checkout now match the block presentation.'
 					);

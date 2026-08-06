@@ -5,15 +5,15 @@
  * Description: Sell products and services with recurring payments in your WooCommerce Store.
  * Author: WooCommerce
  * Author URI: https://woocommerce.com/
- * Version: 9.0.1
+ * Version: 9.1.0
  * Requires Plugins: woocommerce
  *
  * Requires at least: 6.9
  * Tested up to: 7.0
  * Requires PHP: 7.4
  *
- * WC requires at least: 10.8
- * WC tested up to: 10.8
+ * WC requires at least: 10.9
+ * WC tested up to: 11.0
  *
  * License: GNU General Public License v3.0
  * License URI: http://www.gnu.org/licenses/gpl-3.0.html
@@ -29,6 +29,15 @@
 require_once __DIR__ . '/vendor/autoload.php';
 require_once __DIR__ . '/includes/class-wc-subscriptions-dependency-manager.php';
 $dependency_manager = new WC_Subscriptions_Dependency_Manager( WC_Subscriptions::$wc_minimum_supported_version );
+
+// Clear the cached WooCommerce version whenever the active plugin lists change. This closes the stale-cache window
+// on manual deactivation and on the classic updater's silent deactivate_plugins( $plugin, true ), which skips the
+// deactivation hooks but still updates the option. Registered before the dependency gate below so the listeners are
+// attached even on requests where the gate fails. On multisite, the network-wide listener only clears the transient
+// of the site the request runs on; other subsites keep their cached version until the 1h TTL expires, and stay safe
+// in the meantime because the dependency manager re-checks WooCommerce presence on every request before trusting it.
+add_action( 'update_option_active_plugins', [ $dependency_manager, 'delete_woocommerce_active_version_cache' ] );
+add_action( 'update_site_option_active_sitewide_plugins', [ $dependency_manager, 'delete_woocommerce_active_version_cache' ] );
 
 // Check the dependencies before loading the plugin. If the dependencies are not met, display an admin notice and exit
 if ( ! $dependency_manager->has_valid_dependencies() ) {
@@ -55,7 +64,7 @@ add_action(
 	function () {
 		// Overrides the WooCommerce version to the WC()->version.
 		// This prevents the wrong version being stored in the transient during a WooCommerce core downgrade.
-		set_transient( 'wcs_woocommerce_active_version', WC()->version, HOUR_IN_SECONDS );
+		set_transient( WC_Subscriptions_Dependency_Manager::WC_ACTIVE_VERSION_TRANSIENT, WC()->version, HOUR_IN_SECONDS );
 	}
 );
 
@@ -84,7 +93,7 @@ class WC_Subscriptions {
 	public static $plugin_file = __FILE__;
 
 	/** @var string */
-	public static $version = '9.0.1'; // WRCS: DEFINED_VERSION.
+	public static $version = '9.1.0'; // WRCS: DEFINED_VERSION.
 
 	/** @var string */
 	public static $wc_minimum_supported_version = '7.7';

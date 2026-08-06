@@ -229,10 +229,24 @@ class WCSG_Recipient_Management {
 			remove_action( 'init', 'WCS_User_Change_Status_Handler::maybe_change_users_subscription', 100 );
 
 			$subscription = wcs_get_subscription( absint( $_GET['subscription_id'] ) );
-			$user_id      = $subscription->get_user_id();
-			$new_status   = $_GET['change_subscription_to']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash
 
-			if ( WCS_User_Change_Status_Handler::validate_request( $user_id, $subscription, $new_status, $_GET['_wpnonce'] ) ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash
+			if ( ! $subscription ) {
+				return;
+			}
+
+			// validate_request() below checks the capability against the subscription owner, not the recipient,
+			// so confirm the caller is currently the recipient here.
+			$current_user_id = get_current_user_id();
+
+			if ( ! $current_user_id || (int) WCS_Gifting::get_recipient_user( $subscription ) !== $current_user_id ) {
+				return;
+			}
+
+			$user_id    = $subscription->get_user_id();
+			$new_status = sanitize_text_field( wp_unslash( $_GET['change_subscription_to'] ) );
+			$wpnonce    = sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) );
+
+			if ( WCS_User_Change_Status_Handler::validate_request( $user_id, $subscription, $new_status, $wpnonce ) ) {
 				WCS_User_Change_Status_Handler::change_users_subscription( $subscription, $new_status );
 				wp_safe_redirect( $subscription->get_view_order_url() );
 				exit;

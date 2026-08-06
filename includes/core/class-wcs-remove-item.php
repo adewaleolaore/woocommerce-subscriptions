@@ -141,21 +141,25 @@ class WCS_Remove_Item {
 
 					do_action( 'wcs_user_removed_item', $line_item, $subscription );
 				}
+
+				// Clear cache after updating subscription items.
+				clean_post_cache( $subscription->get_id() );
+				wc_delete_shop_order_transients( $subscription );
+
+				/**
+				 * In WooCommerce 3.0 the subscription object and its items override the database with their current content,
+				 * so we lost the changes we just did with `wc_update_order_item`. Re-reading the object fixes this problem.
+				 */
+				$subscription = wcs_get_subscription( $subscription->get_id() );
+				$subscription->calculate_totals();
+				wp_safe_redirect( $subscription->get_view_order_url() );
+				exit;
 			}
 
-			// Clear cache after updating subscription items.
-			clean_post_cache( $subscription->get_id() );
-			wc_delete_shop_order_transients( $subscription );
-
-			/**
-			 * In WooCommerce 3.0 the subscription object and its items override the database with their current content,
-			 * so we lost the changes we just did with `wc_update_order_item`. Re-reading the object fixes this problem.
-			 */
-			$subscription = wcs_get_subscription( $subscription->get_id() );
-			$subscription->calculate_totals();
-			wp_safe_redirect( $subscription->get_view_order_url() );
+			// Validation failed; a notice explaining why has already been queued. Redirect to the account page
+			// instead of running the recalculation above, which only applies to a validated request.
+			wp_safe_redirect( wc_get_page_permalink( 'myaccount' ) );
 			exit;
-
 		}
 
 	}

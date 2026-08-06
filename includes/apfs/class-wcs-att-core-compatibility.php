@@ -178,18 +178,24 @@ class WCS_ATT_Core_Compatibility {
 	/**
 	 * Get formatted screen id.
 	 *
-	 * @since  APFS 3.1.20
+	 * Returns the given screen id unchanged. This was a correct shim when introduced
+	 * (APFS 3.1.20, Nov 2020): WC built its admin page hooks from the translated
+	 * 'WooCommerce' menu title, so this method translated the 'woocommerce_' prefix
+	 * to match. WooCommerce 7.3.0 pinned the hook name to the untranslated
+	 * 'woocommerce' prefix (see WC_Admin_Menus::admin_menu() and
+	 * https://github.com/woocommerce/woocommerce/issues/35677) — below the minimum
+	 * WooCommerce version Subscriptions supports — so screen ids like
+	 * 'woocommerce_page_wc-settings' are locale-independent and can be compared
+	 * directly, which is what the plugin now does everywhere.
 	 *
-	 * @param  string $key
+	 * @since  APFS 3.1.20
+	 * @deprecated 9.1.0 Compare against the literal screen id directly. Kept as an identity for backwards compatibility.
+	 *
+	 * @param  string $screen_id
 	 * @return string
 	 */
 	public static function get_formatted_screen_id( $screen_id ) {
-
-		$prefix = sanitize_title( __( 'WooCommerce', 'woocommerce' ) );
-		if ( 0 === strpos( $screen_id, 'woocommerce_' ) ) {
-			$screen_id = str_replace( 'woocommerce_', $prefix . '_', $screen_id );
-		}
-
+		wc_deprecated_function( __METHOD__, '9.1.0' );
 		return $screen_id;
 	}
 

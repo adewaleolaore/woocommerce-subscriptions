@@ -58,6 +58,12 @@ class WC_Subscription_Downloads_Ajax {
 		if ( $query_subscriptions ) {
 			foreach ( $query_subscriptions as $item ) {
 				$_product = wc_get_product( $item->ID );
+
+				// Only surface products the current user may read, matching WooCommerce core's product search.
+				if ( ! wc_products_array_filter_readable( $_product ) ) {
+					continue;
+				}
+
 				$found_subscriptions[ $item->ID ] = sanitize_text_field( $_product->get_formatted_name() );
 
 				if ( 'variable-subscription' == $_product->get_type() ) {
@@ -65,6 +71,14 @@ class WC_Subscription_Downloads_Ajax {
 
 					foreach ( $chindren as $child ) {
 						$_child_product = wc_get_product( $child );
+
+						// A readable parent doesn't make its variations readable - check each one. Note that
+						// 'product_variation' is registered without map_meta_cap, so this resolves to the
+						// primitive read_product capability that shop managers and administrators hold.
+						if ( ! wc_products_array_filter_readable( $_child_product ) ) {
+							continue;
+						}
+
 						$found_subscriptions[ $child->ID ] = sanitize_text_field( $_child_product->get_formatted_name() );
 					}
 				}
@@ -99,6 +113,9 @@ class WC_Subscription_Downloads_Ajax {
 					'status'       => 'any',
 				)
 			);
+
+			// Filter to products the current user may read, matching WooCommerce core's product search.
+			$products = array_filter( $products, 'wc_products_array_filter_readable' );
 
 			foreach ( $products as $product ) {
 				$results[ $product->get_id() ] = sanitize_text_field( $product->get_formatted_name() );

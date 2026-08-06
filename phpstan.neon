@@ -192,6 +192,11 @@ parameters:
 			path: includes/apfs/class-wcs-att-order.php
 
 		-
+			message: "#^Found usage of constant DOING_AJAX\\. Use wp_doing_ajax\\(\\) instead\\.$#"
+			count: 1
+			path: includes/apfs/class-wcs-att-order.php
+
+		-
 			message: "#^Constant WCS_ATT_ABSPATH not found\\.$#"
 			count: 2
 			path: includes/apfs/class-wcs-att-product.php
@@ -199,6 +204,11 @@ parameters:
 		-
 			message: "#^Variable \\$product in empty\\(\\) always exists and is not falsy\\.$#"
 			count: 1
+			path: includes/apfs/class-wcs-att-product.php
+
+		-
+			message: "#^PHPDoc tag @param has invalid value \\(boolean False, if runtime meta should be (retrieved from|saved on) the product object\\.\\)\\: Unexpected token \"False\", expected variable at offset \\d+ on line 7$#"
+			count: 3
 			path: includes/apfs/class-wcs-att-product.php
 
 		-
@@ -318,7 +328,7 @@ parameters:
 
 		-
 			message: "#^Method WCS_ATT_Integration_PAO\\:\\:add_discount_addons_data\\(\\) should return array but return statement is missing\\.$#"
-			count: 1
+			count: 2
 			path: includes/apfs/integrations/class-wcs-att-integration-pao.php
 
 		-
@@ -443,7 +453,7 @@ parameters:
 
 		-
 			message: "#^Function wc_cp_get_composited_cart_items not found\\.$#"
-			count: 3
+			count: 2
 			path: includes/apfs/integrations/class-wcs-att-integration-pb-cp.php
 
 		-
@@ -763,7 +773,7 @@ parameters:
 
 		-
 			message: "#^Method WCS_ATT\\:\\:maybe_define_constant\\(\\) should return bool but return statement is missing\\.$#"
-			count: 1
+			count: 2
 			path: includes/apfs/woocommerce-all-products-for-subscriptions.php
 
 		-

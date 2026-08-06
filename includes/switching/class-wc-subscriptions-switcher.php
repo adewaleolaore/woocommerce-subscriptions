@@ -826,10 +826,20 @@ class WC_Subscriptions_Switcher {
 			return;
 		}
 
+		$switches = self::cart_contains_switches( 'any' );
+
+		// Only touch the switch relations - which triggers a full $order->save() - when there is a switch to
+		// record, or stale switch relations on the order to clear. add_order_meta() runs on every checkout
+		// (including every block/Store API checkout), so skipping this on a non-switch checkout avoids an
+		// unnecessary order save on the checkout hot path.
+		$has_existing_switch_relations = ! empty( WCS_Related_Order_Store::instance()->get_related_subscription_ids( $order, 'switch' ) );
+
+		if ( false === $switches && ! $has_existing_switch_relations ) {
+			return;
+		}
+
 		// delete all the existing subscription switch links before adding new ones
 		WCS_Related_Order_Store::instance()->delete_relations( $order, 'switch' );
-
-		$switches = self::cart_contains_switches( 'any' );
 
 		if ( false !== $switches ) {
 
@@ -1449,7 +1459,9 @@ class WC_Subscriptions_Switcher {
 
 			$subscription = wcs_get_subscription( absint( $switch_subscription_id ) );
 
-			if ( ! $subscription ) {
+			// Authorize before any branch below that reveals the subscription's contents, and reuse the
+			// missing-subscription message so the unauthorized case is indistinguishable from it.
+			if ( ! $subscription || ! current_user_can( 'switch_shop_subscription', $subscription->get_id() ) ) {
 				throw new Exception( __( 'The subscription may have been deleted.', 'woocommerce-subscriptions' ) );
 			}
 
@@ -2416,8 +2428,12 @@ class WC_Subscriptions_Switcher {
 					if ( $order_is_parent ) {
 						if ( $order_item->meta_exists( '_synced_sign_up_fee' ) ) {
 							$item_total -= $order_item->get_meta( '_synced_sign_up_fee' ) * $order_item->get_quantity();
-						} elseif ( $subscription_item->meta_exists( '_has_trial' ) ) {
+						} elseif ( $subscription_item->meta_exists( '_has_trial' ) && ( $subscription->get_time( 'trial_end' ) > 0 || '' !== $subscription->get_trial_period() ) ) {
 							// Where there's a free trial, the sign up fee is the entire item total so the non-sign-up fee portion is 0.
+							// The _has_trial item meta alone isn't proof a trial was served: resubscribed subscriptions can carry it
+							// even though their parent order charged the full recurring price. Only treat the parent item total as a
+							// pure sign-up fee when the subscription itself also records a trial, either via a scheduled trial end
+							// date or the trial period stored at creation.
 							$item_total = 0;
 						} else {
 							// For non-free trial subscriptions, the sign up fee portion is the order total minus the recurring total (subscription item total).
@@ -2574,6 +2590,28 @@ class WC_Subscriptions_Switcher {
 	}
 
 	/**
+	 * Checks whether a cart item is a switch whose first payment has been deferred to a later date.
+	 *
+	 * This is the condition the mock free trial is applied on (@see maybe_set_free_trial()), which keeps any
+	 * recurring amount out of the switch totals. The classic cart/checkout builds its "due today" item subtotal from
+	 * the line totals calculated with that mock trial active, so what is displayed and what is charged can't
+	 * disagree. The comparison is deliberately loose - the timestamp may be stored as a numeric string.
+	 *
+	 * @since 9.1.0
+	 *
+	 * @param  array $cart_item The cart item to check.
+	 * @return bool
+	 */
+	public static function cart_item_has_deferred_first_payment( $cart_item ) {
+
+		if ( ! is_array( $cart_item ) || ! isset( $cart_item['subscription_switch']['first_payment_timestamp'] ) ) {
+			return false;
+		}
+
+		return 0 != $cart_item['subscription_switch']['first_payment_timestamp']; // phpcs:ignore Universal.Operators.StrictComparisons.LooseNotEqual -- Deliberate: the timestamp may be stored as a numeric string, and both 0 and '0' mean "no deferral".
+	}
+
+	/**
 	 * Make sure switch cart item price doesn't include any recurring amount by setting a free trial.
 	 *
 	 * @since 2.0.18
@@ -2581,7 +2619,7 @@ class WC_Subscriptions_Switcher {
 	public static function maybe_set_free_trial( $total = '' ) {
 
 		foreach ( WC()->cart->get_cart() as $cart_item_key => $cart_item ) {
-			if ( isset( $cart_item['subscription_switch']['first_payment_timestamp'] ) && 0 != $cart_item['subscription_switch']['first_payment_timestamp'] ) {
+			if ( self::cart_item_has_deferred_first_payment( $cart_item ) ) {
 				wcs_set_objects_property( WC()->cart->cart_contents[ $cart_item_key ]['data'], 'subscription_trial_length', 1, 'set_prop_only' );
 			}
 		}
@@ -2597,7 +2635,7 @@ class WC_Subscriptions_Switcher {
 	public static function maybe_unset_free_trial( $total = '' ) {
 
 		foreach ( WC()->cart->get_cart() as $cart_item_key => $cart_item ) {
-			if ( isset( $cart_item['subscription_switch']['first_payment_timestamp'] ) && 0 != $cart_item['subscription_switch']['first_payment_timestamp'] ) {
+			if ( self::cart_item_has_deferred_first_payment( $cart_item ) ) {
 				wcs_set_objects_property( WC()->cart->cart_contents[ $cart_item_key ]['data'], 'subscription_trial_length', 0, 'set_prop_only' );
 			}
 		}

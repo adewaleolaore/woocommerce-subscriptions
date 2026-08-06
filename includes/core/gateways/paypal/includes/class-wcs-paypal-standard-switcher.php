@@ -60,7 +60,7 @@ class WCS_PayPal_Standard_Switcher {
 
 			$is_billing_agreement = wcs_is_paypal_profile_a( wcs_get_paypal_id( $subscription->get_id() ), 'billing_agreement' );
 
-			if ( 'line_item' == $item['type'] && wcs_is_product_switchable_type( $item['product_id'] ) ) {
+			if ( $item instanceof WC_Order_Item_Product && 'line_item' === $item->get_type() && wcs_is_product_switchable_type( $item->get_product_id() ) ) {
 				$is_product_switchable = true;
 			} else {
 				$is_product_switchable = false;

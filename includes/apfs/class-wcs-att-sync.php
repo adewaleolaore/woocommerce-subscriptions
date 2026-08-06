@@ -172,7 +172,7 @@ class WCS_ATT_Sync {
 		$screen    = get_current_screen();
 		$screen_id = $screen ? $screen->id : '';
 
-		if ( $screen_id === WCS_ATT_Core_Compatibility::get_formatted_screen_id( 'woocommerce_page_wc-settings' ) && isset( $_GET['tab'] ) && $_GET['tab'] === 'subscriptions' ) {
+		if ( 'woocommerce_page_wc-settings' === $screen_id && isset( $_GET['tab'] ) && 'subscriptions' === $_GET['tab'] ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only check of the current settings tab to decide whether to add script parameters.
 
 			$billing_period_strings = self::rename_subscription_billing_period_range_data( WC_Subscriptions_Synchroniser::get_billing_period_ranges() );
 

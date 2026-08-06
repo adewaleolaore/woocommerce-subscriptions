@@ -153,10 +153,10 @@ class WCS_Admin_Reports {
 	 * @since 1.5
 	 */
 	public static function reports_scripts() {
-		$suffix         = defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ? '' : '.min';
-		$screen         = get_current_screen();
-		$wc_screen_id   = sanitize_title( __( 'WooCommerce', 'woocommerce-subscriptions' ) );
-		$version        = WC_Subscriptions_Core_Plugin::instance()->get_library_version();
+		$suffix       = defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ? '' : '.min';
+		$screen       = get_current_screen();
+		$wc_screen_id = 'woocommerce'; // Locale-independent: WC core pins the 'woocommerce' page hook prefix regardless of the translated menu title.
+		$version      = WC_Subscriptions_Core_Plugin::instance()->get_library_version();
 
 		// Reports Subscriptions Pages
 		if ( in_array( $screen->id, apply_filters( 'woocommerce_reports_screen_ids', array( $wc_screen_id . '_page_wc-reports', 'toplevel_page_wc-reports', 'dashboard' ) ) ) && isset( $_GET['tab'] ) && 'subscriptions' == $_GET['tab'] ) {

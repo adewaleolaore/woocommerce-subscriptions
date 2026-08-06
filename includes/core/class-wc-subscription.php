@@ -2695,8 +2695,11 @@ class WC_Subscription extends WC_Order {
 
 				$sign_up_fee = 0;
 
-			} elseif ( 'true' === $line_item->get_meta( '_has_trial' ) ) {
-				// Sign up is amount paid for this item on original order, we can safely use 3.0 getters here because we know from the above condition 3.0 is active
+			} elseif ( 'true' === $line_item->get_meta( '_has_trial' ) && ( $this->get_time( 'trial_end' ) > 0 || '' !== $this->get_trial_period() ) ) {
+				// Sign up is amount paid for this item on original order, we can safely use 3.0 getters here because we know from the above condition 3.0 is active.
+				// The _has_trial item meta alone isn't proof a trial was served: resubscribed subscriptions can carry it even though
+				// their parent order charged the full recurring price. Only treat the parent item total as a pure sign-up fee when the
+				// subscription itself also records a trial, either via a scheduled trial end date or the trial period stored at creation.
 				$sign_up_fee = ( (float) $original_order_item->get_total( 'edit' ) ) / $original_order_item->get_quantity( 'edit' );
 			} elseif ( $original_order_item->meta_exists( '_synced_sign_up_fee' ) ) {
 				$sign_up_fee = ( (float) $original_order_item->get_meta( '_synced_sign_up_fee' ) ) / $original_order_item->get_quantity( 'edit' );

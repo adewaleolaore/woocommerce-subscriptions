@@ -228,6 +228,11 @@ class WCS_My_Account_Payment_Methods {
 			return;
 		}
 
+		// Only the token's owner may remap their subscriptions to it.
+		if ( (int) $default_token->get_user_id() !== get_current_user_id() ) {
+			return;
+		}
+
 		$tokens = WCS_Payment_Tokens::get_customer_tokens( $default_token->get_user_id(), $default_token->get_gateway_id() );
 		unset( $tokens[ $default_token_id ] );
 

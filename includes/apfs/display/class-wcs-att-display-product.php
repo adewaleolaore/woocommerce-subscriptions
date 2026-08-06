@@ -174,7 +174,7 @@ class WCS_ATT_Display_Product {
 						'is_base'              => $is_base_scheme,
 						'has_price_filter'     => $has_price_filter,
 						'trial_label'          => self::get_trial_length_label( $trial_length, $trial_period ),
-						'signup_fee_formatted' => $signup_fee > 0 ? wp_strip_all_tags( wc_price( self::get_display_signup_fee( $signup_fee, $product ) ) ) : '',
+						'signup_fee_formatted' => $signup_fee > 0 ? wp_strip_all_tags( wc_price( self::get_display_signup_fee( $signup_fee, $product, $subscription_scheme ) ) ) : '',
 					)
 				),
 			);
@@ -387,7 +387,7 @@ class WCS_ATT_Display_Product {
 			if ( $selected_scheme ) {
 				$initial_trial_length = $selected_scheme->get_trial_length();
 				$initial_trial_period = $selected_scheme->get_trial_period();
-				$initial_signup_fee   = self::get_display_signup_fee( $selected_scheme->get_signup_fee(), $product );
+				$initial_signup_fee   = self::get_display_signup_fee( $selected_scheme->get_signup_fee(), $product, $selected_scheme );
 			}
 
 			ob_start();
@@ -428,15 +428,23 @@ class WCS_ATT_Display_Product {
 	 *
 	 * @since  9.0.0
 	 *
-	 * @param  float      $signup_fee Raw signup fee.
-	 * @param  WC_Product $product    Product (needed for tax class context).
+	 * @param  float               $signup_fee Raw signup fee.
+	 * @param  WC_Product          $product    Product (needed for tax class context).
+	 * @param  WCS_ATT_Scheme|null $scheme     Scheme the fee was read from, if any.
 	 * @return float
 	 */
-	private static function get_display_signup_fee( $signup_fee, $product ) {
+	private static function get_display_signup_fee( $signup_fee, $product, $scheme = null ) {
 
 		if ( $signup_fee <= 0 ) {
 			return $signup_fee;
 		}
+
+		/**
+		 * This filter is documented in includes/core/class-wc-subscriptions-product.php
+		 *
+		 * @since 9.1.0 Exposed via this method
+		 */
+		$signup_fee = (float) apply_filters( 'woocommerce_subscriptions_product_sign_up_fee', $signup_fee, $product, $scheme );
 
 		$args = array(
 			'qty'   => 1,
@@ -781,7 +789,7 @@ class WCS_ATT_Display_Product {
 
 		if ( $signup_fee > 0 ) {
 			/* translators: %s: formatted sign-up fee amount */
-			$details_html .= '<p class="woocommerce-subscriptions-product-details__signup-fee">' . wp_kses_post( sprintf( __( 'Sign-up fee: %s', 'woocommerce-subscriptions' ), wc_price( self::get_display_signup_fee( $signup_fee, $product ) ) ) ) . '</p>';
+			$details_html .= '<p class="woocommerce-subscriptions-product-details__signup-fee">' . wp_kses_post( sprintf( __( 'Sign-up fee: %s', 'woocommerce-subscriptions' ), wc_price( self::get_display_signup_fee( $signup_fee, $product, $scheme ) ) ) ) . '</p>';
 		}
 
 		if ( '' === $details_html ) {

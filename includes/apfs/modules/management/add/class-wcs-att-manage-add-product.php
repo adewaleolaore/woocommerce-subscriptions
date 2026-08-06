@@ -281,6 +281,12 @@ class WCS_ATT_Manage_Add_Product extends WCS_ATT_Abstract_Module {
 			return;
 		}
 
+		if ( ! WCS_ATT_Manage_Add::current_user_can_add_to_subscription( $subscription ) ) {
+			// translators: %d: subscription ID.
+			wc_add_notice( sprintf( __( 'You do not have permission to edit subscription #%d.', 'woocommerce-subscriptions' ), $subscription_id ), 'error' );
+			return;
+		}
+
 		/*
 		 * Relay form validation to 'WC_Form_Handler::add_to_cart_action'.
 		 * Use 'woocommerce_add_to_cart_validation' filter to:

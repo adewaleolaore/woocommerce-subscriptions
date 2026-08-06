@@ -612,8 +612,7 @@ class WCS_ATT_Integration_PB_CP {
 			);
 		}
 
-		$child_items = self::get_bundle_type_cart_items( $cart_item );
-		$child_items = function_exists( 'wc_cp_is_composite_container_cart_item' ) && wc_cp_is_composite_container_cart_item( $cart_item ) ? wc_cp_get_composited_cart_items( $cart_item, false, false, true ) : self::get_bundle_type_cart_items( $cart_item );
+		$child_items = self::get_container_child_cart_items( $cart_item );
 
 		if ( ! empty( $child_items ) ) {
 
@@ -721,7 +720,7 @@ class WCS_ATT_Integration_PB_CP {
 	/**
 	 * Hide bundled cart item subscription options.
 	 *
-	 * @deprecated 9.1.0 In-cart plan switching was removed to match the block cart & checkout, so child item options
+	 * @deprecated 9.0.1 In-cart plan switching was removed to match the block cart & checkout, so child item options
 	 *                   are no longer rendered. Retained for backward compatibility with any code calling it directly.
 	 *
 	 * @param  boolean $show
@@ -731,7 +730,7 @@ class WCS_ATT_Integration_PB_CP {
 	 */
 	public static function hide_child_item_options( $show, $cart_item, $cart_item_key ) {
 
-		wcs_deprecated_function( __METHOD__, '9.1.0' );
+		wcs_deprecated_function( __METHOD__, '9.0.1' );
 
 		if ( $container_cart_item = self::get_bundle_type_cart_item_container( $cart_item ) ) {
 			if ( self::has_scheme_data( $container_cart_item ) ) {
@@ -1098,7 +1097,7 @@ class WCS_ATT_Integration_PB_CP {
 	 * the container line, so the classic cart/checkout "due today" and recurring-price presentation reflect the
 	 * whole bundle rather than just the container's base price.
 	 *
-	 * @since 9.1.0
+	 * @since 9.0.1
 	 *
 	 * @param  array  $cart_item The container cart item.
 	 * @param  string $tax       '', 'incl' or 'excl'. Empty uses the cart's display setting.
@@ -1107,6 +1106,20 @@ class WCS_ATT_Integration_PB_CP {
 	public static function get_container_aggregate_price( $cart_item, $tax = '' ) {
 		$scheme_key = WCS_ATT_Product_Schemes::get_subscription_scheme( $cart_item['data'] );
 		return self::calculate_container_item_price( $cart_item, $scheme_key, $tax );
+	}
+
+	/**
+	 * Returns a container cart item's child cart items, resolving composites in deep mode (nested composite children
+	 * included) and every other bundle type via the registered child-item getters. Single home for the composite
+	 * vs bundle child-discovery rule, shared by the aggregate price calculation and the due-today subtotal sum.
+	 *
+	 * @since 9.1.0
+	 *
+	 * @param  array $cart_item The container cart item.
+	 * @return array The child cart items, or an empty array.
+	 */
+	private static function get_container_child_cart_items( $cart_item ) {
+		return function_exists( 'wc_cp_is_composite_container_cart_item' ) && wc_cp_is_composite_container_cart_item( $cart_item ) ? wc_cp_get_composited_cart_items( $cart_item, false, false, true ) : self::get_bundle_type_cart_items( $cart_item );
 	}
 
 	/**
@@ -1129,7 +1142,7 @@ class WCS_ATT_Integration_PB_CP {
 			$price = (float) wc_get_price_including_tax( $product, array( 'price' => WCS_ATT_Product_Prices::get_price( $product, $scheme_key ) ) );
 		}
 
-		$child_items = function_exists( 'wc_cp_is_composite_container_cart_item' ) && wc_cp_is_composite_container_cart_item( $cart_item ) ? wc_cp_get_composited_cart_items( $cart_item, false, false, true ) : self::get_bundle_type_cart_items( $cart_item );
+		$child_items = self::get_container_child_cart_items( $cart_item );
 
 		if ( ! empty( $child_items ) ) {
 
@@ -1247,12 +1260,18 @@ class WCS_ATT_Integration_PB_CP {
 
 	/**
 	 * Builds the per-item "$X due today" subtotal for a bundle/composite container, matching the classic cart/checkout
-	 * presentation for regular subscription items (see WC_Subscriptions_Cart::get_formatted_product_subtotal). The
-	 * amount is the first payment for the whole bundle: the aggregate first period plus the container sign-up fee when
-	 * there is no trial, or just the sign-up fee when a trial defers the first period. Containers with no sign-up fee
-	 * keep the standard aggregate subtotal with no label, matching the block gate.
+	 * presentation for regular subscription items (see WC_Subscriptions_Cart::get_due_today_cart_item_subtotal). The
+	 * amount is the first payment for the whole bundle: the container line's own pre-coupon subtotal plus each child
+	 * line's (children are separate cart lines with their own line totals, which the container's exclude), with the
+	 * corresponding tax amounts added when prices are displayed including tax.
 	 *
-	 * @since 9.1.0
+	 * The line totals were calculated with any mock free trial still active, so they already embody a deferred first
+	 * payment: for a container switch whose first payment has been deferred, the container line carries only the
+	 * switch cost and the child lines defer along with it (their 'subscription_switch' data is copied from the
+	 * container's), matching a regular subscription line and, more importantly, the amount actually charged.
+	 * Containers with no sign-up fee keep the standard aggregate subtotal with no label, matching the block gate.
+	 *
+	 * @since 9.0.1
 	 *
 	 * @param  string $subtotal  The aggregate subtotal markup WooCommerce built for the container line.
 	 * @param  array  $cart_item The container cart item.
@@ -1260,14 +1279,39 @@ class WCS_ATT_Integration_PB_CP {
 	 */
 	private static function container_due_today_subtotal( $subtotal, $cart_item ) {
 
-		$quantity = isset( $cart_item['quantity'] ) ? $cart_item['quantity'] : 1;
+		if ( wcs_cart_contains_renewal() ) {
+			return $subtotal;
+		}
 
-		// The first period for a container is the aggregate of the container and its child item prices.
-		$get_recurring_amount = function ( $incl_tax ) use ( $cart_item, $quantity ) {
-			return self::get_container_aggregate_price( $cart_item, $incl_tax ? 'incl' : 'excl' ) * $quantity;
-		};
+		// Only items with a sign-up fee show the per-item "… due today" amount, matching the block cart/checkout gate.
+		if ( WC_Subscriptions_Product::get_sign_up_fee( $cart_item['data'] ) <= 0 ) {
+			return $subtotal;
+		}
 
-		return WC_Subscriptions_Cart::get_due_today_subtotal( $cart_item['data'], $quantity, $get_recurring_amount, $subtotal );
+		// Defensive: the line totals are only set once the cart totals have been calculated.
+		if ( ! isset( $cart_item['line_subtotal'], $cart_item['line_subtotal_tax'] ) ) {
+			return $subtotal;
+		}
+
+		$incl_tax   = 'incl' === WC_Subscriptions_Cart::get_tax_display_mode();
+		$amount_due = (float) $cart_item['line_subtotal'] + ( $incl_tax ? (float) $cart_item['line_subtotal_tax'] : 0 );
+
+		$child_items = self::get_container_child_cart_items( $cart_item );
+
+		if ( ! empty( $child_items ) ) {
+			foreach ( $child_items as $child_item ) {
+				// Defensive, like the container guard above - but a child with missing line totals bails out entirely:
+				// rendering a "due today" amount that silently excludes a child's share would present an understated
+				// figure as the exact first payment. The standard aggregate subtotal is the safer degradation.
+				if ( ! isset( $child_item['line_subtotal'], $child_item['line_subtotal_tax'] ) ) {
+					return $subtotal;
+				}
+
+				$amount_due += (float) $child_item['line_subtotal'] + ( $incl_tax ? (float) $child_item['line_subtotal_tax'] : 0 );
+			}
+		}
+
+		return WC_Subscriptions_Cart::render_due_today_subtotal( $amount_due );
 	}
 
 	/**
@@ -1276,7 +1320,7 @@ class WCS_ATT_Integration_PB_CP {
 	 * this integration, which prices the container as the aggregate of the container and its child items so the
 	 * classic checkout reflects the whole bundle (matching the block checkout) rather than the container's base price.
 	 *
-	 * @since 9.1.0
+	 * @since 9.0.1
 	 *
 	 * @param  string $quantity_html The "× qty" markup rendered before this filter.
 	 * @param  array  $cart_item     The cart item.
@@ -1304,7 +1348,7 @@ class WCS_ATT_Integration_PB_CP {
 	/**
 	 * Modify bundle container cart item subscription options to include child item prices.
 	 *
-	 * @deprecated 9.1.0 In-cart plan switching was removed to match the block cart & checkout, so container options are
+	 * @deprecated 9.0.1 In-cart plan switching was removed to match the block cart & checkout, so container options are
 	 *                   no longer rendered. Retained for backward compatibility with any code calling it directly, and
 	 *                   still applies the 'wcsatt_cart_item_options' filter so callbacks on it keep firing (deprecated).
 	 *
@@ -1316,7 +1360,7 @@ class WCS_ATT_Integration_PB_CP {
 	 */
 	public static function container_item_options( $options, $subscription_schemes, $cart_item, $cart_item_key ) {
 
-		wcs_deprecated_function( __METHOD__, '9.1.0' );
+		wcs_deprecated_function( __METHOD__, '9.0.1' );
 
 		$child_items = self::get_bundle_type_cart_items( $cart_item );
 
@@ -1376,7 +1420,7 @@ class WCS_ATT_Integration_PB_CP {
 		return apply_filters_deprecated(
 			'wcsatt_cart_item_options',
 			array( $options, $subscription_schemes, $cart_item, $cart_item_key ),
-			'9.1.0',
+			'9.0.1',
 			'',
 			'In-cart subscription plan switching was removed; the classic cart & checkout now match the block presentation.'
 		);

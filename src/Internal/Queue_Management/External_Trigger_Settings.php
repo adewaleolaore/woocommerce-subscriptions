@@ -53,7 +53,7 @@ class External_Trigger_Settings {
 	/**
 	 * Query parameter set on the redirect after a successful regeneration. Drives the admin-notice render.
 	 */
-	private const REGENERATED_NOTICE_FLAG = 'wcs_external_token_regenerated';
+	private const REGENERATED_NOTICE_TRANSIENT = 'wcs_external_token_regenerated_notice';
 
 	/**
 	 * Internal identifier used to derive the custom URL field's `id`. Not used for the section title/sectionend
@@ -84,6 +84,11 @@ class External_Trigger_Settings {
 		add_filter( 'woocommerce_subscription_settings', array( $this, 'add_settings' ), self::SETTINGS_PRIORITY );
 		add_action( 'woocommerce_admin_field_' . self::FIELD_TYPE_URL, array( $this, 'render_url_field' ) );
 		add_action( 'update_option_' . self::OPTION_ENABLED, array( $this, 'maybe_generate_token' ), 10, 2 );
+		// The hook above only fires when an existing option *changes* value, so it misses the very first enable
+		// from a clean sheet — a save that *adds* the option fires add_option_, not update_option_. This settings-save
+		// invariant guarantees a token exists whenever the feature is enabled, covering that first enable and
+		// self-healing any store already stuck enabled-without-a-token.
+		add_action( 'woocommerce_update_options_subscriptions', array( $this, 'ensure_token_when_enabled' ) );
 		add_action( 'admin_post_' . self::REGENERATE_ACTION, array( $this, 'handle_token_regeneration_request' ) );
 		add_action( 'admin_notices', array( $this, 'maybe_render_token_notice' ) );
 	}
@@ -189,11 +194,11 @@ class External_Trigger_Settings {
 	}
 
 	/**
-	 * Generate and persist a fresh token when the feature transitions to enabled and no token exists yet.
+	 * Generate a token when the enable option *changes* to 'yes' (the `update_option_<enabled>` hook).
 	 *
-	 * Tied to the `update_option_<enabled>` hook so it fires only on a settings save that flips the state.
-	 * Idempotent across repeated enables: once a token is set it sticks until a future "regenerate" affordance
-	 * (out of scope for v1) explicitly clears it.
+	 * This fires only when an existing option changes value, so it misses the very first enable from a clean sheet
+	 * (which adds the option). {@see self::ensure_token_when_enabled()}, on the settings-save hook, covers that
+	 * case; the two are complementary and both idempotent.
 	 *
 	 * @param mixed $old_value Previous option value.
 	 * @param mixed $new_value New option value.
@@ -204,6 +209,36 @@ class External_Trigger_Settings {
 		if ( 'yes' !== $new_value ) {
 			return;
 		}
+
+		$this->generate_token_if_missing();
+	}
+
+	/**
+	 * Enforce the invariant "web cron enabled ⇒ a token exists" on every subscriptions-settings save.
+	 *
+	 * Hooked on `woocommerce_update_options_subscriptions`, which fires after the fields are persisted — so a
+	 * first-ever enable (stored via add_option, which {@see self::maybe_generate_token()}'s change-hook misses)
+	 * still gets a token, and any store already stuck enabled-without-a-token self-heals on its next save.
+	 *
+	 * @return void
+	 */
+	public function ensure_token_when_enabled(): void {
+		if ( 'yes' !== get_option( self::OPTION_ENABLED, 'no' ) ) {
+			return;
+		}
+
+		$this->generate_token_if_missing();
+	}
+
+	/**
+	 * Persist a fresh token when none exists yet.
+	 *
+	 * Idempotent: an existing token is never overwritten — that would invalidate a URL the merchant may already
+	 * have configured in their web cron service; only the explicit regenerate affordance clears it.
+	 *
+	 * @return void
+	 */
+	private function generate_token_if_missing(): void {
 		if ( '' !== (string) get_option( self::OPTION_TOKEN, '' ) ) {
 			return;
 		}
@@ -242,8 +277,8 @@ class External_Trigger_Settings {
 
 	/**
 	 * Admin-post handler for the "Generate a new URL" link. Gated on the `manage_woocommerce` capability and a
-	 * nonce; on success, regenerates the token and redirects back to the referring page with a flag that
-	 * causes the success notice to render.
+	 * nonce; on success, regenerates the token, sets a one-shot notice flag, and redirects back to the referring
+	 * page.
 	 *
 	 * Public because WordPress's hook system invokes it; not intended for direct consumption.
 	 *
@@ -266,29 +301,49 @@ class External_Trigger_Settings {
 		if ( false === $referer ) {
 			$referer = admin_url( 'admin.php?page=wc-settings&tab=subscriptions' );
 		}
-		$redirect = add_query_arg( self::REGENERATED_NOTICE_FLAG, '1', $referer );
 
-		wp_safe_redirect( $redirect );
+		// Flag the success notice via a short-lived, per-user transient rather than a query arg. WooCommerce's
+		// post-save redirect preserves REQUEST_URI query args, so a URL flag would re-fire the notice on every
+		// later save of the same screen; a transient consumed on first render shows it exactly once.
+		set_transient( $this->regenerated_notice_transient_key(), '1', MINUTE_IN_SECONDS );
+
+		wp_safe_redirect( $referer );
 		exit;
 	}
 
 	/**
-	 * Render a one-time success notice after a regeneration, keyed on the redirect query-arg set by the
-	 * handler. The notice only renders on the WC subscriptions settings tab so it doesn't show up on
-	 * unrelated admin pages a merchant might happen to navigate to with a stale URL.
+	 * Render the "token regenerated" success notice exactly once, then consume the flag.
+	 *
+	 * The flag is a per-user transient set by {@see self::handle_token_regeneration_request()} on the redirect
+	 * back to the settings screen; deleting it on first render means a subsequent unrelated settings save no
+	 * longer re-shows the notice.
 	 *
 	 * Public because WordPress's hook system invokes it.
 	 *
 	 * @return void
 	 */
 	public function maybe_render_token_notice(): void {
-		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- notice flag is informational, not a state change.
-		if ( empty( $_GET[ self::REGENERATED_NOTICE_FLAG ] ) ) {
+		$key = $this->regenerated_notice_transient_key();
+		if ( ! get_transient( $key ) ) {
 			return;
 		}
+
+		delete_transient( $key );
 
 		echo '<div class="notice notice-success is-dismissible"><p>' .
 			esc_html__( 'New web cron URL generated. Update your web cron service with the new URL.', 'woocommerce-subscriptions' ) .
 			'</p></div>';
+	}
+
+	/**
+	 * Per-user transient key under which the one-shot "token regenerated" notice flag is stored.
+	 *
+	 * Scoped per user so one admin's regeneration never surfaces the notice to another. Public so tests can
+	 * target the exact transient; the key is not sensitive.
+	 *
+	 * @return string
+	 */
+	public function regenerated_notice_transient_key(): string {
+		return self::REGENERATED_NOTICE_TRANSIENT . '_' . get_current_user_id();
 	}
 }

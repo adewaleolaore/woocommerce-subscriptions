@@ -12,6 +12,8 @@ defined( 'ABSPATH' ) || exit;
 
 class WC_REST_Subscriptions_Controller extends WC_REST_Orders_Controller {
 
+	use WCS_REST_Payment_Method_Meta;
+
 	/**
 	 * Route base.
 	 *
@@ -601,14 +603,8 @@ class WC_REST_Subscriptions_Controller extends WC_REST_Orders_Controller {
 				throw new Exception( sprintf( __( 'The %s payment gateway does not support admin changing the payment method.', 'woocommerce-subscriptions' ), $payment_method ) );
 			}
 
-			// Format the payment meta in the way payment gateways expect so it can be validated.
-			$payment_method_meta = array();
-
-			foreach ( $payment_meta as $table => $meta ) {
-				foreach ( $meta as $meta_key => $value ) {
-					$payment_method_meta[ $table ][ $meta_key ] = array( 'value' => $value );
-				}
-			}
+			// Populate only the fields the gateway itself declares, ignoring any other keys the request names.
+			$payment_method_meta = $this->build_gateway_payment_method_meta( $subscription, $payment_method, $payment_meta );
 
 			$subscription->set_payment_method( $payment_method, $payment_method_meta );
 		} catch ( Exception $e ) {

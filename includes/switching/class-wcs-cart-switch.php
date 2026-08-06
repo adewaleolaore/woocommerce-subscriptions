@@ -83,58 +83,69 @@ class WCS_Cart_Switch extends WCS_Cart_Renewal {
 			// Pay for existing order
 			$order_key = sanitize_text_field( wp_unslash( $_GET['key'] ) );
 			$order_id  = ( isset( $wp->query_vars['order-pay'] ) ) ? $wp->query_vars['order-pay'] : absint( $_GET['order_id'] );
-			$order     = wc_get_order( $wp->query_vars['order-pay'] );
+			$order     = wc_get_order( $order_id );
 
-			if ( wcs_get_objects_property( $order, 'order_key' ) == $order_key && $order->has_status( array( 'pending', 'failed' ) ) && wcs_order_contains_switch( $order ) ) {
-				WC()->cart->empty_cart( true );
+			if (
+				! ( $order instanceof WC_Order )
+				|| ! hash_equals( $order->get_order_key(), $order_key )
+				|| ! $order->has_status( array( 'pending', 'failed' ) )
+				|| ! wcs_order_contains_switch( $order )
+			) {
+				return;
+			}
 
-				$switch_order_data = wcs_get_objects_property( $order, 'subscription_switch_data' );
+			$switch_order_data = wcs_get_objects_property( $order, 'subscription_switch_data' );
 
-				foreach ( $order->get_items() as $item_id => $line_item ) {
+			if ( ! $this->current_user_can_pay_for_switch_order( $order, $switch_order_data ) ) {
+				return;
+			}
 
-					// clear the GET args so we can add non-switch items to the cart cleanly
-					unset( $_GET['switch-subscription'] );
-					unset( $_GET['item'] );
+			WC()->cart->empty_cart( true );
 
-					// check if this order item is for a switch
-					foreach ( $switch_order_data as $subscription_id => $switch_data ) {
+			foreach ( $order->get_items() as $item_id => $line_item ) {
 
-						if ( isset( $switch_data['switches'] ) && in_array( $item_id, array_keys( $switch_data['switches'] ) ) ) {
+				// clear the GET args so we can add non-switch items to the cart cleanly
+				unset( $_GET['switch-subscription'] );
+				unset( $_GET['item'] );
 
-							$_GET['switch-subscription'] = $subscription_id;
+				// check if this order item is for a switch
+				foreach ( $switch_order_data as $subscription_id => $switch_data ) {
 
-							// Backwards compatibility (2.1 -> 2.1.2)
-							$subscription_item_id_key = ( isset( $switch_data['switches'][ $item_id ]['subscription_item_id'] ) ) ? 'subscription_item_id' : 'remove_line_item';
-							$_GET['item']             = $switch_data['switches'][ $item_id ][ $subscription_item_id_key ];
-							break;
-						}
+					if ( isset( $switch_data['switches'] ) && in_array( $item_id, array_keys( $switch_data['switches'] ) ) ) {
+
+						$_GET['switch-subscription'] = $subscription_id;
+
+						// Backwards compatibility (2.1 -> 2.1.2)
+						$subscription_item_id_key = ( isset( $switch_data['switches'][ $item_id ]['subscription_item_id'] ) ) ? 'subscription_item_id' : 'remove_line_item';
+						$_GET['item']             = $switch_data['switches'][ $item_id ][ $subscription_item_id_key ];
+						break;
 					}
+				}
 
-					$order_item = wcs_get_order_item( $item_id, $order );
-					$product    = wc_get_product( wcs_get_canonical_product_id( $order_item ) );
-					$product_id = $product->is_type( 'variation' ) ? $product->get_parent_id() : $product->get_id();
+				$order_item = wcs_get_order_item( $item_id, $order );
+				$product    = wc_get_product( wcs_get_canonical_product_id( $order_item ) );
+				$product_id = $product->is_type( 'variation' ) ? $product->get_parent_id() : $product->get_id();
 
-					$order_product_data = array(
-						'_qty'          => (int) $line_item['qty'],
-						'_variation_id' => (int) $line_item['variation_id'],
-					);
+				$order_product_data = array(
+					'_qty'          => (int) $line_item['qty'],
+					'_variation_id' => (int) $line_item['variation_id'],
+				);
 
-					$variations = array();
+				$variations = array();
 
-					foreach ( $order_item['item_meta'] as $meta_key => $meta_value ) {
-						$meta_value = is_array( $meta_value ) ? $meta_value[0] : $meta_value; // In WC 3.0 the meta values are no longer arrays
+				foreach ( $order_item['item_meta'] as $meta_key => $meta_value ) {
+					$meta_value = is_array( $meta_value ) ? $meta_value[0] : $meta_value; // In WC 3.0 the meta values are no longer arrays
 
-						if ( taxonomy_is_product_attribute( $meta_key ) || meta_is_product_attribute( $meta_key, $meta_value, $product_id ) ) {
-							$variations[ $meta_key ]           = $meta_value;
-							$_POST[ 'attribute_' . $meta_key ] = $meta_value;
-						}
+					if ( taxonomy_is_product_attribute( $meta_key ) || meta_is_product_attribute( $meta_key, $meta_value, $product_id ) ) {
+						$variations[ $meta_key ]           = $meta_value;
+						$_POST[ 'attribute_' . $meta_key ] = $meta_value;
 					}
+				}
 
-					$passed_validation = apply_filters( 'woocommerce_add_to_cart_validation', true, $product_id, $order_product_data['_qty'], $order_product_data['_variation_id'] );
+				$passed_validation = apply_filters( 'woocommerce_add_to_cart_validation', true, $product_id, $order_product_data['_qty'], $order_product_data['_variation_id'] );
 
-					if ( $passed_validation ) {
-						$cart_item_key = WC()->cart->add_to_cart( $product_id, $order_product_data['_qty'], $order_product_data['_variation_id'], $variations, array() );
-					}
+				if ( $passed_validation ) {
+					$cart_item_key = WC()->cart->add_to_cart( $product_id, $order_product_data['_qty'], $order_product_data['_variation_id'], $variations, array() );
 				}
 			}
 
@@ -142,6 +153,47 @@ class WCS_Cart_Switch extends WCS_Cart_Renewal {
 			wp_safe_redirect( wc_get_checkout_url() );
 			exit;
 		}
+	}
+
+	/**
+	 * Check whether the current user can pay for every subscription represented by a switch order.
+	 *
+	 * @param WC_Order $order             Switch order.
+	 * @param mixed    $switch_order_data Stored switch data.
+	 * @return bool
+	 */
+	private function current_user_can_pay_for_switch_order( $order, $switch_order_data ) {
+		if (
+			! is_user_logged_in()
+			|| ! current_user_can( 'pay_for_order', $order->get_id() )
+			|| ! is_array( $switch_order_data )
+			|| empty( $switch_order_data )
+		) {
+			return false;
+		}
+
+		$switch_subscriptions = wcs_get_subscriptions_for_switch_order( $order );
+
+		if ( empty( $switch_subscriptions ) ) {
+			return false;
+		}
+
+		foreach ( $switch_subscriptions as $subscription_id => $subscription ) {
+			if (
+				! is_array( $switch_order_data[ $subscription_id ] ?? null )
+				|| ! current_user_can( 'switch_shop_subscription', $subscription->get_id() )
+			) {
+				return false;
+			}
+		}
+
+		foreach ( $switch_order_data as $subscription_id => $switch_data ) {
+			if ( ! is_array( $switch_data ) || ! isset( $switch_subscriptions[ $subscription_id ] ) ) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	/**

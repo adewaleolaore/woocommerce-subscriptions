@@ -363,7 +363,10 @@ class WC_Subscriptions_Checkout {
 	 * @since 1.0.0 - Migrated from WooCommerce Subscriptions v2.6.0
 	 */
 	public static function maybe_add_free_trial_item_meta( $item, $cart_item_key, $cart_item, $subscription ) {
-		if ( wcs_is_subscription( $subscription ) && WC_Subscriptions_Product::get_trial_length( $item->get_product() ) > 0 ) {
+		// Checking the product's configured trial isn't enough: resubscribe carts remove the trial from the in-memory
+		// cart product only, while $item->get_product() loads a fresh product with the trial still configured. The
+		// subscription's own trial end date reflects the trial actually granted at checkout, so require it too.
+		if ( wcs_is_subscription( $subscription ) && $subscription->get_time( 'trial_end' ) > 0 && WC_Subscriptions_Product::get_trial_length( $item->get_product() ) > 0 ) {
 			$item->update_meta_data( '_has_trial', 'true' );
 		}
 	}
